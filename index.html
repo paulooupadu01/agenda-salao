@@ -131,6 +131,19 @@
       return resultado;
     }
 
+    const EVENTO_INICIAL = {
+      titulo: '',
+      congregacaoId: 'espanhola',
+      espacoId: 'salao_principal',
+      tipoEvento: 'outro',
+      data: new Date().toISOString().split('T')[0],
+      horaInicio: '19:00',
+      horaFim: '21:00',
+      responsavel: '',
+      telefone: '',
+      observacoes: ''
+    };
+
     function App() {
       const [reservasManuais, setReservasManuais] = useState([]);
       const [congAtiva, setCongAtiva] = useState('todas');
@@ -144,20 +157,10 @@
       const [modalAberto, setModalAberto] = useState(false);
       const [modalConfigAberto, setModalConfigAberto] = useState(false);
       const [eventoSelecionado, setEventoSelecionado] = useState(null);
+      const [eventoEmEdicao, setEventoEmEdicao] = useState(null); // id do evento sendo editado ou null
       const [anoEdicao, setAnoEdicao] = useState(new Date().getFullYear());
 
-      const [novoEvento, setNovoEvento] = useState({
-        titulo: '',
-        congregacaoId: 'espanhola',
-        espacoId: 'salao_principal',
-        tipoEvento: 'outro',
-        data: new Date().toISOString().split('T')[0],
-        horaInicio: '19:00',
-        horaFim: '21:00',
-        responsavel: '',
-        telefone: '',
-        observacoes: ''
-      });
+      const [formEvento, setFormEvento] = useState(EVENTO_INICIAL);
 
       // Firebase Sync
       useEffect(() => {
@@ -205,13 +208,12 @@
         };
       }, []);
 
-      // Gerador automático das reuniões fixas semanais para o ano visualizado
+      // Gerador automático das reuniões fixas semanais
       const reunioesFixasDoAno = useMemo(() => {
         const ano = currentDate.getFullYear();
         const escalaDoAno = rotacoes[String(ano)] || rotacoes["2026"] || CONFIG_RODIZIO_DEFAULT["2026"];
         const lista = [];
 
-        // Gera para o mês atual, mês anterior e mês posterior para navegação fluida
         const mesAtual = currentDate.getMonth();
         const mesesParaGerar = [mesAtual - 1, mesAtual, mesAtual + 1];
 
@@ -230,7 +232,6 @@
               const configCong = escalaDoAno?.[cong.id];
               if (!configCong) return;
 
-              // Meio de semana
               if (configCong.meioSemana && Number(configCong.meioSemana.diaSemana) === diaSemana) {
                 lista.push({
                   id: `fixa_meio_${cong.id}_${dataStr}`,
@@ -248,7 +249,6 @@
                 });
               }
 
-              // Fim de semana
               if (configCong.fimSemana && Number(configCong.fimSemana.diaSemana) === diaSemana) {
                 lista.push({
                   id: `fixa_fim_${cong.id}_${dataStr}`,
@@ -288,7 +288,7 @@
         });
       }, [todosEventos, congAtiva, filtroEspaco]);
 
-      // 1. DIAS PARA A VISÃO MÊS
+      // 1. Visão Mês
       const diasDoMes = useMemo(() => {
         const ano = currentDate.getFullYear();
         const mes = currentDate.getMonth();
@@ -308,7 +308,7 @@
         return dias;
       }, [currentDate, eventosFiltrados]);
 
-      // 2. DIAS PARA A VISÃO SEMANA (Domingo a Sábado)
+      // 2. Visão Semana
       const diasDaSemana = useMemo(() => {
         const d = new Date(currentDate);
         const diaSemanaAtual = d.getDay();
@@ -334,7 +334,7 @@
         return dias;
       }, [currentDate, eventosFiltrados]);
 
-      // 3. EVENTOS PARA A VISÃO DIA
+      // 3. Visão Dia
       const eventosDoDiaAtual = useMemo(() => {
         const ano = currentDate.getFullYear();
         const mes = currentDate.getMonth() + 1;
@@ -346,7 +346,7 @@
         };
       }, [currentDate, eventosFiltrados]);
 
-      // Navegação por período
+      // Navegação
       const handlePrev = () => {
         const d = new Date(currentDate);
         if (viewMode === 'mes') d.setMonth(d.getMonth() - 1);
@@ -365,7 +365,6 @@
 
       const handleHoje = () => setCurrentDate(new Date());
 
-      // Título do cabeçalho da data
       const tituloPeriodo = useMemo(() => {
         if (viewMode === 'mes') {
           return currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
@@ -380,26 +379,54 @@
         return currentDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
       }, [viewMode, currentDate, diasDaSemana]);
 
-      // Salvar Reserva Manual
+      // Abrir Modal para CRIAR novo
+      const abrirNovoAgendamento = (dataPredefinida = null) => {
+        setEventoEmEdicao(null);
+        setFormEvento({
+          ...EVENTO_INICIAL,
+          data: dataPredefinida || new Date().toISOString().split('T')[0]
+        });
+        setModalAberto(true);
+      };
+
+      // Abrir Modal para EDITAR existente
+      const abrirEditarEvento = (ev) => {
+        if (ev.isFixa) {
+          alert("Esta é uma reunião fixa semanal. Para alterar o dia ou horário, use o botão 'Configurações' no topo da tela.");
+          return;
+        }
+        setEventoEmEdicao(ev.id);
+        setFormEvento({
+          titulo: ev.titulo || '',
+          congregacaoId: ev.congregacaoId || 'espanhola',
+          espacoId: ev.espacoId || 'salao_principal',
+          tipoEvento: ev.tipoEvento || 'outro',
+          data: ev.data || new Date().toISOString().split('T')[0],
+          horaInicio: ev.horaInicio || '19:00',
+          horaFim: ev.horaFim || '21:00',
+          responsavel: ev.responsavel || '',
+          telefone: ev.telefone || '',
+          observacoes: ev.observacoes || ''
+        });
+        setEventoSelecionado(null);
+        setModalAberto(true);
+      };
+
+      // Salvar (tanto Criação quanto Edição)
       const handleSalvarReserva = async (e) => {
         e.preventDefault();
-        if (!window.db || !window.firestoreOps) return;
+        if (!window.db || !window.firestoreOps) {
+          alert("Aguardando conexão com o banco...");
+          return;
+        }
         const { collection, doc, setDoc } = window.firestoreOps;
-        const id = 'res_' + Date.now();
-        await setDoc(doc(collection(window.db, 'reservas_salao'), id), novoEvento);
+        const id = eventoEmEdicao || ('res_' + Date.now());
+        
+        await setDoc(doc(collection(window.db, 'reservas_salao'), id), formEvento, { merge: true });
+        
         setModalAberto(false);
-        setNovoEvento({
-          titulo: '',
-          congregacaoId: 'espanhola',
-          espacoId: 'salao_principal',
-          tipoEvento: 'outro',
-          data: new Date().toISOString().split('T')[0],
-          horaInicio: '19:00',
-          horaFim: '21:00',
-          responsavel: '',
-          telefone: '',
-          observacoes: ''
-        });
+        setEventoEmEdicao(null);
+        setFormEvento(EVENTO_INICIAL);
       };
 
       // Excluir
@@ -463,7 +490,7 @@
                   ⚙️ Configurações
                 </button>
                 <button
-                  onClick={() => setModalAberto(true)}
+                  onClick={() => abrirNovoAgendamento()}
                   className="px-3.5 py-2 text-xs md:text-sm font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-lg shadow transition"
                 >
                   ➕ Agendar
@@ -506,7 +533,6 @@
                     <option value="sala_b">Sala B</option>
                   </select>
 
-                  {/* ABAS: MÊS / SEMANA / DIA */}
                   <div className="bg-slate-900 p-0.5 rounded-lg flex border border-slate-700 text-xs">
                     <button
                       onClick={() => setViewMode('mes')}
@@ -542,7 +568,7 @@
           </div>
 
           <main className="max-w-6xl mx-auto px-4 mt-3">
-            {/* NAVEGAÇÃO DE PERÍODO (MÊS / SEMANA / DIA) */}
+            {/* NAVEGAÇÃO DE PERÍODO */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <button
@@ -572,7 +598,7 @@
               </h2>
 
               <button
-                onClick={() => setModalAberto(true)}
+                onClick={() => abrirNovoAgendamento()}
                 className="hidden sm:inline-flex text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline"
               >
                 + Agendar evento
@@ -604,8 +630,9 @@
                       <div
                         key={dia.dataStr}
                         onClick={() => {
-                          setNovoEvento(prev => ({ ...prev, data: dia.dataStr }));
-                          if (dia.eventos.length === 0) setModalAberto(true);
+                          if (dia.eventos.length === 0) {
+                            abrirNovoAgendamento(dia.dataStr);
+                          }
                         }}
                         className={`min-h-[95px] md:min-h-[120px] p-1.5 md:p-2 border-b border-r border-slate-100 flex flex-col justify-between cursor-pointer transition hover:bg-blue-50/30 ${ehHoje ? 'bg-blue-50/30' : 'bg-white'}`}
                       >
@@ -653,7 +680,6 @@
                       className={`bg-white rounded-2xl border shadow-sm p-3 flex flex-col justify-between min-h-[340px] ${ehHoje ? 'border-blue-400 ring-2 ring-blue-100' : 'border-slate-200'}`}
                     >
                       <div>
-                        {/* Topo do dia da semana */}
                         <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
                           <div>
                             <span className={`text-xs font-bold ${idx === 0 ? 'text-red-600' : idx === 6 ? 'text-blue-600' : 'text-slate-500'}`}>
@@ -670,7 +696,6 @@
                           )}
                         </div>
 
-                        {/* Lista de eventos no dia da semana */}
                         <div className="space-y-2 mt-2">
                           {dia.eventos.length === 0 ? (
                             <p className="text-[11px] text-slate-400 italic py-4 text-center">Nenhum evento</p>
@@ -701,10 +726,7 @@
                       </div>
 
                       <button
-                        onClick={() => {
-                          setNovoEvento(prev => ({ ...prev, data: dia.dataStr }));
-                          setModalAberto(true);
-                        }}
+                        onClick={() => abrirNovoAgendamento(dia.dataStr)}
                         className="mt-3 text-center text-xs font-bold text-blue-600 hover:text-blue-700 py-1.5 border border-dashed border-blue-200 rounded-lg hover:bg-blue-50 transition"
                       >
                         + Reservar
@@ -726,10 +748,7 @@
                     </p>
                   </div>
                   <button
-                    onClick={() => {
-                      setNovoEvento(prev => ({ ...prev, data: eventosDoDiaAtual.dataStr }));
-                      setModalAberto(true);
-                    }}
+                    onClick={() => abrirNovoAgendamento(eventosDoDiaAtual.dataStr)}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow transition"
                   >
                     + Agendar para esta data
@@ -793,7 +812,7 @@
                               ⏰ {ev.horaInicio} às {ev.horaFim}
                             </div>
                             <span className="text-xs text-blue-600 font-semibold underline mt-1 inline-block">
-                              Ver Detalhes
+                              Ver Detalhes / Editar
                             </span>
                           </div>
                         </div>
@@ -805,7 +824,7 @@
             )}
           </main>
 
-          {/* MODAL DETALHES */}
+          {/* MODAL DETALHES COM BOTÃO DE EDITAR */}
           {eventoSelecionado && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-xl">
@@ -838,14 +857,22 @@
                   )}
                 </div>
 
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center pt-2 border-t border-slate-100">
                   {!eventoSelecionado.isFixa ? (
-                    <button
-                      onClick={() => handleExcluir(eventoSelecionado.id, false)}
-                      className="text-xs text-red-600 font-bold hover:underline"
-                    >
-                      Excluir Agendamento
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => abrirEditarEvento(eventoSelecionado)}
+                        className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-xs border border-blue-200 flex items-center gap-1 transition"
+                      >
+                        ✏️ Editar
+                      </button>
+                      <button
+                        onClick={() => handleExcluir(eventoSelecionado.id, false)}
+                        className="px-3 py-1.5 text-xs text-red-600 font-bold hover:bg-red-50 rounded-lg transition"
+                      >
+                        Excluir
+                      </button>
+                    </div>
                   ) : <div></div>}
                   <button
                     onClick={() => setEventoSelecionado(null)}
@@ -858,12 +885,14 @@
             </div>
           )}
 
-          {/* MODAL NOVO AGENDAMENTO */}
+          {/* MODAL: NOVO AGENDAMENTO OU EDIÇÃO */}
           {modalAberto && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-lg rounded-2xl p-6 shadow-xl max-h-[90vh] overflow-y-auto">
                 <div className="flex justify-between items-center mb-4 border-b pb-2">
-                  <h3 className="font-bold text-lg text-slate-800">Novo Agendamento</h3>
+                  <h3 className="font-bold text-lg text-slate-800">
+                    {eventoEmEdicao ? '✏️ Editar Agendamento' : '➕ Novo Agendamento'}
+                  </h3>
                   <button onClick={() => setModalAberto(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
                 </div>
                 <form onSubmit={handleSalvarReserva} className="space-y-4">
@@ -873,8 +902,8 @@
                       required
                       type="text"
                       placeholder="Ex: Discurso de Casamento, Limpeza Geral..."
-                      value={novoEvento.titulo}
-                      onChange={e => setNovoEvento({ ...novoEvento, titulo: e.target.value })}
+                      value={formEvento.titulo}
+                      onChange={e => setFormEvento({ ...formEvento, titulo: e.target.value })}
                       className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     />
                   </div>
@@ -883,8 +912,8 @@
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 mb-1">Congregação *</label>
                       <select
-                        value={novoEvento.congregacaoId}
-                        onChange={e => setNovoEvento({ ...novoEvento, congregacaoId: e.target.value })}
+                        value={formEvento.congregacaoId}
+                        onChange={e => setFormEvento({ ...formEvento, congregacaoId: e.target.value })}
                         className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:outline-none"
                       >
                         {congregacoes.map(c => (
@@ -896,8 +925,8 @@
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 mb-1">Espaço *</label>
                       <select
-                        value={novoEvento.espacoId}
-                        onChange={e => setNovoEvento({ ...novoEvento, espacoId: e.target.value })}
+                        value={formEvento.espacoId}
+                        onChange={e => setFormEvento({ ...formEvento, espacoId: e.target.value })}
                         className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:outline-none"
                       >
                         {ESPACOS_SALAO.map(e => (
@@ -913,8 +942,8 @@
                       <input
                         required
                         type="date"
-                        value={novoEvento.data}
-                        onChange={e => setNovoEvento({ ...novoEvento, data: e.target.value })}
+                        value={formEvento.data}
+                        onChange={e => setFormEvento({ ...formEvento, data: e.target.value })}
                         className="w-full text-sm border border-slate-300 rounded-lg p-2 focus:outline-none"
                       />
                     </div>
@@ -923,8 +952,8 @@
                       <input
                         required
                         type="time"
-                        value={novoEvento.horaInicio}
-                        onChange={e => setNovoEvento({ ...novoEvento, horaInicio: e.target.value })}
+                        value={formEvento.horaInicio}
+                        onChange={e => setFormEvento({ ...formEvento, horaInicio: e.target.value })}
                         className="w-full text-sm border border-slate-300 rounded-lg p-2 focus:outline-none"
                       />
                     </div>
@@ -933,8 +962,8 @@
                       <input
                         required
                         type="time"
-                        value={novoEvento.horaFim}
-                        onChange={e => setNovoEvento({ ...novoEvento, horaFim: e.target.value })}
+                        value={formEvento.horaFim}
+                        onChange={e => setFormEvento({ ...formEvento, horaFim: e.target.value })}
                         className="w-full text-sm border border-slate-300 rounded-lg p-2 focus:outline-none"
                       />
                     </div>
@@ -946,8 +975,8 @@
                       <input
                         type="text"
                         placeholder="Nome do irmão"
-                        value={novoEvento.responsavel}
-                        onChange={e => setNovoEvento({ ...novoEvento, responsavel: e.target.value })}
+                        value={formEvento.responsavel}
+                        onChange={e => setFormEvento({ ...formEvento, responsavel: e.target.value })}
                         className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:outline-none"
                       />
                     </div>
@@ -956,8 +985,8 @@
                       <input
                         type="text"
                         placeholder="(47) 99999-9999"
-                        value={novoEvento.telefone}
-                        onChange={e => setNovoEvento({ ...novoEvento, telefone: e.target.value })}
+                        value={formEvento.telefone}
+                        onChange={e => setFormEvento({ ...formEvento, telefone: e.target.value })}
                         className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:outline-none"
                       />
                     </div>
@@ -968,8 +997,8 @@
                     <textarea
                       rows="2"
                       placeholder="Detalhes adicionais..."
-                      value={novoEvento.observacoes}
-                      onChange={e => setNovoEvento({ ...novoEvento, observacoes: e.target.value })}
+                      value={formEvento.observacoes}
+                      onChange={e => setFormEvento({ ...formEvento, observacoes: e.target.value })}
                       className="w-full text-sm border border-slate-300 rounded-lg p-2 focus:outline-none"
                     ></textarea>
                   </div>
@@ -986,7 +1015,7 @@
                       type="submit"
                       className="px-5 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-lg shadow"
                     >
-                      Salvar Agendamento
+                      {eventoEmEdicao ? 'Salvar Alterações' : 'Salvar Agendamento'}
                     </button>
                   </div>
                 </form>
