@@ -75,8 +75,16 @@
       { id: 'outro', label: 'Outro Evento' }
     ];
 
-    // Escala 2026 oficial configurada
-    // diaSemana: 0 = Domingo, 1 = Segunda, 2 = Terça, 3 = Quarta, 4 = Quinta, 5 = Sexta, 6 = Sábado
+    const DIAS_OPCOES = [
+      { valor: 0, nome: "Domingo" },
+      { valor: 1, nome: "Segunda-feira" },
+      { valor: 2, nome: "Terça-feira" },
+      { valor: 3, nome: "Quarta-feira" },
+      { valor: 4, nome: "Quinta-feira" },
+      { valor: 5, nome: "Sexta-feira" },
+      { valor: 6, nome: "Sábado" }
+    ];
+
     const CONFIG_RODIZIO_DEFAULT = {
       "2026": {
         espanhola: {
@@ -94,15 +102,38 @@
       }
     };
 
-    const DIAS_OPCOES = [
-      { valor: 0, nome: "Domingo" },
-      { valor: 1, nome: "Segunda-feira" },
-      { valor: 2, nome: "Terça-feira" },
-      { valor: 3, nome: "Quarta-feira" },
-      { valor: 4, nome: "Quinta-feira" },
-      { valor: 5, nome: "Sexta-feira" },
-      { valor: 6, nome: "Sábado" }
-    ];
+    // Função utilitária para normalizar dados antigos ou mal formatados do banco
+    function normalizarEscala(dadosDoBanco) {
+      if (!dadosDoBanco || typeof dadosDoBanco !== 'object') return CONFIG_RODIZIO_DEFAULT;
+      
+      const resultado = { ...CONFIG_RODIZIO_DEFAULT, ...dadosDoBanco };
+
+      Object.keys(resultado).forEach(ano => {
+        const anoObj = resultado[ano];
+        if (!anoObj || typeof anoObj !== 'object') {
+          resultado[ano] = CONFIG_RODIZIO_DEFAULT["2026"];
+          return;
+        }
+
+        ['espanhola', 'itinga', 'profipo'].forEach(congId => {
+          const padrao = CONFIG_RODIZIO_DEFAULT["2026"][congId];
+          if (!anoObj[congId] || typeof anoObj[congId] !== 'object') {
+            anoObj[congId] = padrao;
+            return;
+          }
+
+          // Se estiver salvo no formato legado de string direta
+          if (!anoObj[congId].meioSemana || typeof anoObj[congId].meioSemana !== 'object' || typeof anoObj[congId].meioSemana.diaSemana === 'undefined') {
+            anoObj[congId].meioSemana = padrao.meioSemana;
+          }
+          if (!anoObj[congId].fimSemana || typeof anoObj[congId].fimSemana !== 'object' || typeof anoObj[congId].fimSemana.diaSemana === 'undefined') {
+            anoObj[congId].fimSemana = padrao.fimSemana;
+          }
+        });
+      });
+
+      return resultado;
+    }
 
     function App() {
       const [reservasManuais, setReservasManuais] = useState([]);
@@ -132,7 +163,7 @@
         observacoes: ''
       });
 
-      // Firebase Sync
+      // Firebase Sync Seguro
       useEffect(() => {
         let unsubReservas = null;
         let unsubConfig = null;
@@ -144,19 +175,29 @@
 
             unsubReservas = onSnapshot(collection(window.db, 'reservas_salao'), (snapshot) => {
               const dados = [];
-              snapshot.forEach((d) => dados.push({ id: d.id, ...d.data() }));
+              snapshot.forEach((d) => {
+                const item = d.data();
+                // Ignora se for lixo salvo anteriormente
+                if (item && item.data && item.titulo) {
+                  dados.push({ id: d.id, ...item });
+                }
+              });
               setReservasManuais(dados);
               setStatusConexao('Tempo real ativo');
             }, (error) => {
               console.error(error);
-              setStatusConexao('Modo offline / erro ao sincronizar');
+              setStatusConexao('Erro de sincronização');
             });
 
             unsubConfig = onSnapshot(doc(window.db, 'configuracoes', 'geral'), (docSnap) => {
               if (docSnap.exists()) {
                 const data = docSnap.data();
-                if (data.rotacoes) setRotacoes(data.rotacoes);
-                if (data.congregacoes) setCongregacoes(data.congregacoes);
+                if (data.rotacoes) {
+                  setRotacoes(normalizarEscala(data.rotacoes));
+                }
+                if (Array.isArray(data.congregacoes) && data.congregacoes.length > 0) {
+                  setCongregacoes(data.congregacoes);
+                }
               }
             });
           }
@@ -169,7 +210,7 @@
         };
       }, []);
 
-      // Gerador automático das reuniões fixas para o mês em visualização
+      // Gerador automático das reuniões fixas semanais
       const reunioesFixasDoMes = useMemo(() => {
         const ano = currentDate.getFullYear();
         const mes = currentDate.getMonth();
@@ -183,10 +224,10 @@
           const dataStr = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
 
           congregacoes.forEach(cong => {
-            const configCong = escalaDoAno[cong.id];
+            const configCong = escalaDoAno?.[cong.id];
             if (!configCong) return;
 
-            // Reunião Meio de Semana
+            // Meio de Semana
             if (configCong.meioSemana && Number(configCong.meioSemana.diaSemana) === diaSemana) {
               lista.push({
                 id: `fixa_meio_${cong.id}_${dataStr}`,
@@ -195,16 +236,16 @@
                 espacoId: 'salao_principal',
                 tipoEvento: 'reuniao_meio_semana',
                 data: dataStr,
-                horaInicio: configCong.meioSemana.horaInicio,
-                horaFim: configCong.meioSemana.horaFim,
+                horaInicio: configCong.meioSemana.horaInicio || "19:30",
+                horaFim: configCong.meioSemana.horaFim || "21:15",
                 responsavel: 'Corpo de Anciãos',
                 telefone: '',
-                observacoes: 'Horário fixo semanal do rodízio',
+                observacoes: 'Horário semanal oficial',
                 isFixa: true
               });
             }
 
-            // Reunião Fim de Semana
+            // Fim de Semana
             if (configCong.fimSemana && Number(configCong.fimSemana.diaSemana) === diaSemana) {
               lista.push({
                 id: `fixa_fim_${cong.id}_${dataStr}`,
@@ -213,11 +254,11 @@
                 espacoId: 'salao_principal',
                 tipoEvento: 'reuniao_fim_semana',
                 data: dataStr,
-                horaInicio: configCong.fimSemana.horaInicio,
-                horaFim: configCong.fimSemana.horaFim,
+                horaInicio: configCong.fimSemana.horaInicio || "19:00",
+                horaFim: configCong.fimSemana.horaFim || "20:45",
                 responsavel: 'Corpo de Anciãos',
                 telefone: '',
-                observacoes: 'Horário fixo semanal do rodízio',
+                observacoes: 'Horário semanal oficial',
                 isFixa: true
               });
             }
@@ -226,14 +267,14 @@
         return lista;
       }, [currentDate, rotacoes, congregacoes]);
 
-      // Unir agendamentos manuais com as reuniões fixas automáticas
+      // Unir reuniões automáticas com reservas manuais
       const todosEventos = useMemo(() => {
         const combinados = [...reunioesFixasDoMes, ...reservasManuais];
-        combinados.sort((a, b) => (a.data + a.horaInicio).localeCompare(b.data + b.horaInicio));
+        combinados.sort((a, b) => ((a.data || '') + (a.horaInicio || '')).localeCompare((b.data || '') + (b.horaInicio || '')));
         return combinados;
       }, [reunioesFixasDoMes, reservasManuais]);
 
-      // Filtros aplicados
+      // Filtros
       const eventosFiltrados = useMemo(() => {
         return todosEventos.filter(ev => {
           const matchCong = congAtiva === 'todas' || ev.congregacaoId === congAtiva;
@@ -242,7 +283,7 @@
         });
       }, [todosEventos, congAtiva, filtroEspaco]);
 
-      // Matriz de dias para o calendário
+      // Matriz de dias para calendário
       const diasDoMes = useMemo(() => {
         const ano = currentDate.getFullYear();
         const mes = currentDate.getMonth();
@@ -262,7 +303,7 @@
         return dias;
       }, [currentDate, eventosFiltrados]);
 
-      // Salvar agendamento manual no Firebase
+      // Salvar Agendamento Manual
       const handleSalvarReserva = async (e) => {
         e.preventDefault();
         if (!window.db || !window.firestoreOps) {
@@ -287,13 +328,13 @@
         });
       };
 
-      // Excluir
+      // Excluir Manual
       const handleExcluir = async (id, isFixa) => {
         if (isFixa) {
-          alert("Esta é uma reunião fixa da congregação. Para alterar o dia ou horário, use o botão 'Configurações' no topo.");
+          alert("Esta é uma reunião fixa semanal. Para alterar o dia ou horário, abra 'Configurações' no topo da tela.");
           return;
         }
-        if (!confirm('Deseja realmente cancelar este agendamento?')) return;
+        if (!confirm('Deseja excluir este agendamento?')) return;
         if (!window.db || !window.firestoreOps) return;
         const { doc, deleteDoc } = window.firestoreOps;
         await deleteDoc(doc(window.db, 'reservas_salao', id));
@@ -309,6 +350,20 @@
           congregacoes
         }, { merge: true });
         setModalConfigAberto(false);
+      };
+
+      // Limpar conflitos e restaurar escala padrão
+      const handleRestaurarPadrao = async () => {
+        if (!confirm('Deseja resetar as configurações de rodízio para o padrão oficial das congregações Espanhola, Itinga e Profipo?')) return;
+        if (!window.db || !window.firestoreOps) return;
+        const { doc, setDoc } = window.firestoreOps;
+        await setDoc(doc(window.db, 'configuracoes', 'geral'), {
+          rotacoes: CONFIG_RODIZIO_DEFAULT,
+          congregacoes: CONGREGACOES_DEFAULT
+        });
+        setRotacoes(CONFIG_RODIZIO_DEFAULT);
+        setCongregacoes(CONGREGACOES_DEFAULT);
+        alert('Configurações restauradas com sucesso!');
       };
 
       const handlePrev = () => {
@@ -329,7 +384,7 @@
 
       return (
         <div className="min-h-screen pb-12">
-          {/* CABEÇALHO */}
+          {/* HEADER */}
           <header className="bg-slate-900 text-white sticky top-0 z-20 shadow-md">
             <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -358,7 +413,7 @@
               </div>
             </div>
 
-            {/* BARRA DE FILTROS */}
+            {/* FILTROS */}
             <div className="bg-slate-800 border-t border-slate-700 px-4 py-2.5">
               <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
@@ -416,11 +471,11 @@
               <span className={`w-2 h-2 rounded-full ${statusConexao === 'Tempo real ativo' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
               {statusConexao}
             </span>
-            <span>Reuniões semanais e rodízio em exibição</span>
+            <span>{eventosFiltrados.length} evento(s) no total</span>
           </div>
 
           <main className="max-w-6xl mx-auto px-4 mt-3">
-            {/* NAVEGAÇÃO DO MÊS */}
+            {/* BARRA DE NAVEGAÇÃO */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <button
@@ -452,7 +507,7 @@
               </span>
             </div>
 
-            {/* VISÃO CALENDÁRIO MENSAL */}
+            {/* CALENDÁRIO MENSAL */}
             {viewMode === 'mes' && (
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="grid grid-cols-7 bg-slate-100 border-b border-slate-200 text-center font-bold text-xs text-slate-600 py-2.5">
@@ -488,7 +543,6 @@
                           </span>
                         </div>
 
-                        {/* Eventos do dia */}
                         <div className="space-y-1 mt-1 overflow-y-auto max-h-[85px]">
                           {dia.eventos.map(ev => {
                             const cong = congregacoes.find(c => c.id === ev.congregacaoId);
@@ -515,7 +569,7 @@
               </div>
             )}
 
-            {/* VISÃO LISTA */}
+            {/* LISTA */}
             {viewMode === 'lista' && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
                 {eventosFiltrados.map(ev => {
@@ -549,7 +603,7 @@
                           </div>
                           {ev.isFixa && (
                             <span className="inline-block bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded">
-                              Reunião Fixa da Semana
+                              Reunião Fixa Semanal
                             </span>
                           )}
                           {ev.responsavel && !ev.isFixa && (
@@ -813,7 +867,7 @@
                               <span className="font-bold text-slate-700 block mb-1">Meio de Semana:</span>
                               <div className="space-y-1">
                                 <select
-                                  value={escalaAno.meioSemana.diaSemana}
+                                  value={escalaAno?.meioSemana?.diaSemana ?? 2}
                                   onChange={(e) => {
                                     const novo = { ...rotacoes };
                                     const anoStr = String(anoEdicao);
@@ -832,7 +886,7 @@
                                   <span>Início:</span>
                                   <input
                                     type="time"
-                                    value={escalaAno.meioSemana.horaInicio}
+                                    value={escalaAno?.meioSemana?.horaInicio || "19:30"}
                                     onChange={(e) => {
                                       const novo = { ...rotacoes };
                                       const anoStr = String(anoEdicao);
@@ -851,7 +905,7 @@
                               <span className="font-bold text-slate-700 block mb-1">Fim de Semana:</span>
                               <div className="space-y-1">
                                 <select
-                                  value={escalaAno.fimSemana.diaSemana}
+                                  value={escalaAno?.fimSemana?.diaSemana ?? 0}
                                   onChange={(e) => {
                                     const novo = { ...rotacoes };
                                     const anoStr = String(anoEdicao);
@@ -870,7 +924,7 @@
                                   <span>Início:</span>
                                   <input
                                     type="time"
-                                    value={escalaAno.fimSemana.horaInicio}
+                                    value={escalaAno?.fimSemana?.horaInicio || "09:00"}
                                     onChange={(e) => {
                                       const novo = { ...rotacoes };
                                       const anoStr = String(anoEdicao);
@@ -887,6 +941,21 @@
                         </div>
                       );
                     })}
+                  </div>
+
+                  {/* Botão de Limpeza e Restauração Segura */}
+                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800 flex justify-between items-center">
+                    <div>
+                      <p className="font-bold">Resolver conflitos de dados</p>
+                      <p className="text-[11px] text-amber-700">Se algum horário salvo anteriormente estiver desconfigurado, restaure o padrão oficial.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRestaurarPadrao}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg shadow-sm whitespace-nowrap ml-2"
+                    >
+                      Restaurar Padrão
+                    </button>
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2 border-t">
