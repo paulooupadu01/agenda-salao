@@ -43,7 +43,7 @@
     window.firestoreOps = { collection, doc, setDoc, deleteDoc, onSnapshot };
 
     signInAnonymously(window.auth)
-      .then(() => console.log("Firebase Auth: Conectado com sucesso"))
+      .then(() => console.log("Firebase Auth: Conectado"))
       .catch((err) => console.warn("Firebase Auth aviso:", err.message));
   </script>
 
@@ -75,19 +75,40 @@
       { id: 'outro', label: 'Outro Evento' }
     ];
 
+    // Escala 2026 oficial configurada
+    // diaSemana: 0 = Domingo, 1 = Segunda, 2 = Terça, 3 = Quarta, 4 = Quinta, 5 = Sexta, 6 = Sábado
     const CONFIG_RODIZIO_DEFAULT = {
       "2026": {
-        espanhola: { meioSemana: { diaSemana: 2, diaNome: "Terça-feira", horaInicio: "19:30", horaFim: "21:15" }, fimSemana: { diaSemana: 0, diaNome: "Domingo", horaInicio: "09:00", horaFim: "10:45" } },
-        itinga: { meioSemana: { diaSemana: 3, diaNome: "Quarta-feira", horaInicio: "19:30", horaFim: "21:15" }, fimSemana: { diaSemana: 6, diaNome: "Sábado", horaInicio: "19:00", horaFim: "20:45" } },
-        profipo: { meioSemana: { diaSemana: 4, diaNome: "Quinta-feira", horaInicio: "19:30", horaFim: "21:15" }, fimSemana: { diaSemana: 0, diaNome: "Domingo", horaInicio: "19:00", horaFim: "20:45" } }
+        espanhola: {
+          meioSemana: { diaSemana: 2, diaNome: "Terça-feira", horaInicio: "19:30", horaFim: "21:15" },
+          fimSemana: { diaSemana: 0, diaNome: "Domingo", horaInicio: "09:00", horaFim: "10:45" }
+        },
+        itinga: {
+          meioSemana: { diaSemana: 3, diaNome: "Quarta-feira", horaInicio: "19:30", horaFim: "21:15" },
+          fimSemana: { diaSemana: 6, diaNome: "Sábado", horaInicio: "19:00", horaFim: "20:45" }
+        },
+        profipo: {
+          meioSemana: { diaSemana: 4, diaNome: "Quinta-feira", horaInicio: "19:30", horaFim: "21:15" },
+          fimSemana: { diaSemana: 0, diaNome: "Domingo", horaInicio: "19:00", horaFim: "20:45" }
+        }
       }
     };
 
+    const DIAS_OPCOES = [
+      { valor: 0, nome: "Domingo" },
+      { valor: 1, nome: "Segunda-feira" },
+      { valor: 2, nome: "Terça-feira" },
+      { valor: 3, nome: "Quarta-feira" },
+      { valor: 4, nome: "Quinta-feira" },
+      { valor: 5, nome: "Sexta-feira" },
+      { valor: 6, nome: "Sábado" }
+    ];
+
     function App() {
-      const [reservas, setReservas] = useState([]);
+      const [reservasManuais, setReservasManuais] = useState([]);
       const [congAtiva, setCongAtiva] = useState('todas');
       const [filtroEspaco, setFiltroEspaco] = useState('todos');
-      const [viewMode, setViewMode] = useState('mes'); // 'mes', 'semana', 'lista'
+      const [viewMode, setViewMode] = useState('mes');
       const [currentDate, setCurrentDate] = useState(new Date());
       const [congregacoes, setCongregacoes] = useState(CONGREGACOES_DEFAULT);
       const [rotacoes, setRotacoes] = useState(CONFIG_RODIZIO_DEFAULT);
@@ -111,30 +132,27 @@
         observacoes: ''
       });
 
-      // Sincronização em tempo real
+      // Firebase Sync
       useEffect(() => {
-        let unsubscribeReservas = null;
-        let unsubscribeConfig = null;
+        let unsubReservas = null;
+        let unsubConfig = null;
 
         const checkFirebase = setInterval(() => {
           if (window.db && window.firestoreOps) {
             clearInterval(checkFirebase);
             const { collection, onSnapshot, doc } = window.firestoreOps;
 
-            // Escutar agendamentos
-            unsubscribeReservas = onSnapshot(collection(window.db, 'reservas_salao'), (snapshot) => {
+            unsubReservas = onSnapshot(collection(window.db, 'reservas_salao'), (snapshot) => {
               const dados = [];
               snapshot.forEach((d) => dados.push({ id: d.id, ...d.data() }));
-              dados.sort((a, b) => (a.data + a.horaInicio).localeCompare(b.data + b.horaInicio));
-              setReservas(dados);
+              setReservasManuais(dados);
               setStatusConexao('Tempo real ativo');
             }, (error) => {
-              console.error("Erro ao ler reservas:", error);
-              setStatusConexao('Erro de conexão com o banco');
+              console.error(error);
+              setStatusConexao('Modo offline / erro ao sincronizar');
             });
 
-            // Escutar configurações
-            unsubscribeConfig = onSnapshot(doc(window.db, 'configuracoes', 'geral'), (docSnap) => {
+            unsubConfig = onSnapshot(doc(window.db, 'configuracoes', 'geral'), (docSnap) => {
               if (docSnap.exists()) {
                 const data = docSnap.data();
                 if (data.rotacoes) setRotacoes(data.rotacoes);
@@ -146,16 +164,109 @@
 
         return () => {
           clearInterval(checkFirebase);
-          if (unsubscribeReservas) unsubscribeReservas();
-          if (unsubscribeConfig) unsubscribeConfig();
+          if (unsubReservas) unsubReservas();
+          if (unsubConfig) unsubConfig();
         };
       }, []);
 
-      // Criar agendamento
+      // Gerador automático das reuniões fixas para o mês em visualização
+      const reunioesFixasDoMes = useMemo(() => {
+        const ano = currentDate.getFullYear();
+        const mes = currentDate.getMonth();
+        const escalaDoAno = rotacoes[String(ano)] || rotacoes["2026"] || CONFIG_RODIZIO_DEFAULT["2026"];
+        const totalDias = new Date(ano, mes + 1, 0).getDate();
+        const lista = [];
+
+        for (let dia = 1; dia <= totalDias; dia++) {
+          const dataObj = new Date(ano, mes, dia);
+          const diaSemana = dataObj.getDay();
+          const dataStr = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+
+          congregacoes.forEach(cong => {
+            const configCong = escalaDoAno[cong.id];
+            if (!configCong) return;
+
+            // Reunião Meio de Semana
+            if (configCong.meioSemana && Number(configCong.meioSemana.diaSemana) === diaSemana) {
+              lista.push({
+                id: `fixa_meio_${cong.id}_${dataStr}`,
+                titulo: `Reunião Vida e Ministério (${cong.nome})`,
+                congregacaoId: cong.id,
+                espacoId: 'salao_principal',
+                tipoEvento: 'reuniao_meio_semana',
+                data: dataStr,
+                horaInicio: configCong.meioSemana.horaInicio,
+                horaFim: configCong.meioSemana.horaFim,
+                responsavel: 'Corpo de Anciãos',
+                telefone: '',
+                observacoes: 'Horário fixo semanal do rodízio',
+                isFixa: true
+              });
+            }
+
+            // Reunião Fim de Semana
+            if (configCong.fimSemana && Number(configCong.fimSemana.diaSemana) === diaSemana) {
+              lista.push({
+                id: `fixa_fim_${cong.id}_${dataStr}`,
+                titulo: `Reunião Pública e Sentinela (${cong.nome})`,
+                congregacaoId: cong.id,
+                espacoId: 'salao_principal',
+                tipoEvento: 'reuniao_fim_semana',
+                data: dataStr,
+                horaInicio: configCong.fimSemana.horaInicio,
+                horaFim: configCong.fimSemana.horaFim,
+                responsavel: 'Corpo de Anciãos',
+                telefone: '',
+                observacoes: 'Horário fixo semanal do rodízio',
+                isFixa: true
+              });
+            }
+          });
+        }
+        return lista;
+      }, [currentDate, rotacoes, congregacoes]);
+
+      // Unir agendamentos manuais com as reuniões fixas automáticas
+      const todosEventos = useMemo(() => {
+        const combinados = [...reunioesFixasDoMes, ...reservasManuais];
+        combinados.sort((a, b) => (a.data + a.horaInicio).localeCompare(b.data + b.horaInicio));
+        return combinados;
+      }, [reunioesFixasDoMes, reservasManuais]);
+
+      // Filtros aplicados
+      const eventosFiltrados = useMemo(() => {
+        return todosEventos.filter(ev => {
+          const matchCong = congAtiva === 'todas' || ev.congregacaoId === congAtiva;
+          const matchEspaco = filtroEspaco === 'todos' || ev.espacoId === filtroEspaco;
+          return matchCong && matchEspaco;
+        });
+      }, [todosEventos, congAtiva, filtroEspaco]);
+
+      // Matriz de dias para o calendário
+      const diasDoMes = useMemo(() => {
+        const ano = currentDate.getFullYear();
+        const mes = currentDate.getMonth();
+        const primeiroDiaSemana = new Date(ano, mes, 1).getDay();
+        const totalDias = new Date(ano, mes + 1, 0).getDate();
+
+        const dias = [];
+        for (let i = 0; i < primeiroDiaSemana; i++) dias.push(null);
+        for (let d = 1; d <= totalDias; d++) {
+          const dataStr = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+          dias.push({
+            diaNumero: d,
+            dataStr,
+            eventos: eventosFiltrados.filter(e => e.data === dataStr)
+          });
+        }
+        return dias;
+      }, [currentDate, eventosFiltrados]);
+
+      // Salvar agendamento manual no Firebase
       const handleSalvarReserva = async (e) => {
         e.preventDefault();
         if (!window.db || !window.firestoreOps) {
-          alert("Banco de dados ainda não conectou. Verifique sua internet.");
+          alert("Aguardando conexão com o banco...");
           return;
         }
         const { collection, doc, setDoc } = window.firestoreOps;
@@ -177,15 +288,19 @@
       };
 
       // Excluir
-      const handleExcluir = async (id) => {
-        if (!confirm('Deseja excluir este agendamento?')) return;
+      const handleExcluir = async (id, isFixa) => {
+        if (isFixa) {
+          alert("Esta é uma reunião fixa da congregação. Para alterar o dia ou horário, use o botão 'Configurações' no topo.");
+          return;
+        }
+        if (!confirm('Deseja realmente cancelar este agendamento?')) return;
         if (!window.db || !window.firestoreOps) return;
         const { doc, deleteDoc } = window.firestoreOps;
         await deleteDoc(doc(window.db, 'reservas_salao', id));
         setEventoSelecionado(null);
       };
 
-      // Salvar Configurações
+      // Salvar Configuração de Rodízio
       const handleSalvarConfig = async () => {
         if (!window.db || !window.firestoreOps) return;
         const { doc, setDoc } = window.firestoreOps;
@@ -196,59 +311,25 @@
         setModalConfigAberto(false);
       };
 
-      // Navegação de Datas
       const handlePrev = () => {
         const d = new Date(currentDate);
-        if (viewMode === 'mes') d.setMonth(d.getMonth() - 1);
-        else d.setDate(d.getDate() - 7);
+        d.setMonth(d.getMonth() - 1);
         setCurrentDate(d);
       };
 
       const handleNext = () => {
         const d = new Date(currentDate);
-        if (viewMode === 'mes') d.setMonth(d.getMonth() + 1);
-        else d.setDate(d.getDate() + 7);
+        d.setMonth(d.getMonth() + 1);
         setCurrentDate(d);
       };
 
       const handleHoje = () => setCurrentDate(new Date());
 
-      // Filtros
-      const reservasFiltradas = useMemo(() => {
-        return reservas.filter(r => {
-          const matchCong = congAtiva === 'todas' || r.congregacaoId === congAtiva;
-          const matchEspaco = filtroEspaco === 'todos' || r.espacoId === filtroEspaco;
-          return matchCong && matchEspaco;
-        });
-      }, [reservas, congAtiva, filtroEspaco]);
-
-      // Dias do Mês para o Calendário
-      const diasDoMes = useMemo(() => {
-        const ano = currentDate.getFullYear();
-        const mes = currentDate.getMonth();
-        const primeiroDiaSemana = new Date(ano, mes, 1).getDay();
-        const totalDias = new Date(ano, mes + 1, 0).getDate();
-
-        const dias = [];
-        for (let i = 0; i < primeiroDiaSemana; i++) {
-          dias.push(null);
-        }
-        for (let d = 1; d <= totalDias; d++) {
-          const dataFormatada = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-          dias.push({
-            diaNumero: d,
-            dataStr: dataFormatada,
-            eventos: reservasFiltradas.filter(r => r.data === dataFormatada)
-          });
-        }
-        return dias;
-      }, [currentDate, reservasFiltradas]);
-
       const nomeMesAno = currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
       return (
         <div className="min-h-screen pb-12">
-          {/* HEADER PRINCIPAL */}
+          {/* CABEÇALHO */}
           <header className="bg-slate-900 text-white sticky top-0 z-20 shadow-md">
             <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -277,10 +358,9 @@
               </div>
             </div>
 
-            {/* SELETORES E VISUALIZAÇÕES */}
+            {/* BARRA DE FILTROS */}
             <div className="bg-slate-800 border-t border-slate-700 px-4 py-2.5">
               <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
-                {/* Abas de Congregações */}
                 <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
                   <button
                     onClick={() => setCongAtiva('todas')}
@@ -300,7 +380,6 @@
                   ))}
                 </div>
 
-                {/* Filtro Espaço & Modo de Visão */}
                 <div className="flex items-center gap-2">
                   <select
                     value={filtroEspaco}
@@ -323,7 +402,7 @@
                       onClick={() => setViewMode('lista')}
                       className={`px-2.5 py-1 rounded-md transition ${viewMode === 'lista' ? 'bg-blue-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
                     >
-                      Lista ({reservasFiltradas.length})
+                      Lista
                     </button>
                   </div>
                 </div>
@@ -331,17 +410,17 @@
             </div>
           </header>
 
-          {/* STATUS DE CONEXÃO DISCRETO */}
-          <div className="max-w-6xl mx-auto px-4 mt-2 flex justify-between items-center text-[11px] text-slate-400">
+          {/* STATUS */}
+          <div className="max-w-6xl mx-auto px-4 mt-2 flex justify-between items-center text-[11px] text-slate-500">
             <span className="flex items-center gap-1.5">
               <span className={`w-2 h-2 rounded-full ${statusConexao === 'Tempo real ativo' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
               {statusConexao}
             </span>
-            <span>{reservasFiltradas.length} agendamento(s) no total</span>
+            <span>Reuniões semanais e rodízio em exibição</span>
           </div>
 
           <main className="max-w-6xl mx-auto px-4 mt-3">
-            {/* BARRA DE NAVEGAÇÃO DE DATA (MÊS) */}
+            {/* NAVEGAÇÃO DO MÊS */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <button
@@ -368,33 +447,28 @@
                 {nomeMesAno}
               </h2>
 
-              <button
-                onClick={() => setModalAberto(true)}
-                className="hidden sm:inline-flex text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline"
-              >
-                + Agendar nesta data
-              </button>
+              <span className="text-xs text-slate-500 font-medium">
+                {eventosFiltrados.length} evento(s) neste mês
+              </span>
             </div>
 
-            {/* VISÃO 1: GRADE DO MÊS (CALENDÁRIO) */}
+            {/* VISÃO CALENDÁRIO MENSAL */}
             {viewMode === 'mes' && (
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                {/* Dias da Semana */}
                 <div className="grid grid-cols-7 bg-slate-100 border-b border-slate-200 text-center font-bold text-xs text-slate-600 py-2.5">
-                  <span>Dom</span>
+                  <span className="text-red-600">Dom</span>
                   <span>Seg</span>
                   <span>Ter</span>
                   <span>Qua</span>
                   <span>Qui</span>
                   <span>Sex</span>
-                  <span>Sáb</span>
+                  <span className="text-blue-600">Sáb</span>
                 </div>
 
-                {/* Grade de Dias */}
                 <div className="grid grid-cols-7 auto-rows-fr">
                   {diasDoMes.map((dia, idx) => {
                     if (!dia) {
-                      return <div key={`empty-${idx}`} className="min-h-[90px] md:min-h-[115px] bg-slate-50/50 border-b border-r border-slate-100"></div>;
+                      return <div key={`empty-${idx}`} className="min-h-[95px] md:min-h-[120px] bg-slate-50/50 border-b border-r border-slate-100"></div>;
                     }
 
                     const ehHoje = new Date().toISOString().split('T')[0] === dia.dataStr;
@@ -406,24 +480,18 @@
                           setNovoEvento(prev => ({ ...prev, data: dia.dataStr }));
                           if (dia.eventos.length === 0) setModalAberto(true);
                         }}
-                        className={`min-h-[90px] md:min-h-[115px] p-1.5 md:p-2 border-b border-r border-slate-100 flex flex-col justify-between cursor-pointer transition hover:bg-blue-50/40 ${ehHoje ? 'bg-blue-50/20' : 'bg-white'}`}
+                        className={`min-h-[95px] md:min-h-[120px] p-1.5 md:p-2 border-b border-r border-slate-100 flex flex-col justify-between cursor-pointer transition hover:bg-blue-50/30 ${ehHoje ? 'bg-blue-50/30' : 'bg-white'}`}
                       >
                         <div className="flex justify-between items-center">
                           <span className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${ehHoje ? 'bg-blue-600 text-white' : 'text-slate-700'}`}>
                             {dia.diaNumero}
                           </span>
-                          {dia.eventos.length > 0 && (
-                            <span className="text-[10px] text-slate-400 font-semibold md:hidden">
-                              {dia.eventos.length}
-                            </span>
-                          )}
                         </div>
 
-                        {/* Pílulas de eventos */}
-                        <div className="space-y-1 mt-1 overflow-y-auto max-h-[75px]">
+                        {/* Eventos do dia */}
+                        <div className="space-y-1 mt-1 overflow-y-auto max-h-[85px]">
                           {dia.eventos.map(ev => {
                             const cong = congregacoes.find(c => c.id === ev.congregacaoId);
-                            const espaco = ESPACOS_SALAO.find(e => e.id === ev.espacoId);
                             return (
                               <div
                                 key={ev.id}
@@ -431,9 +499,8 @@
                                   e.stopPropagation();
                                   setEventoSelecionado(ev);
                                 }}
-                                className="text-[11px] leading-tight px-1.5 py-1 rounded font-medium text-white shadow-xs truncate flex items-center gap-1 cursor-pointer hover:opacity-90"
+                                className="text-[10px] md:text-[11px] leading-tight px-1.5 py-1 rounded font-medium text-white shadow-xs truncate flex items-center gap-1 cursor-pointer hover:opacity-90"
                                 style={{ backgroundColor: cong?.hex || '#2563eb' }}
-                                title={`${ev.titulo} (${ev.horaInicio} - ${ev.horaFim}) - ${espaco?.label}`}
                               >
                                 <span className="font-bold text-[9px] opacity-90">{ev.horaInicio}</span>
                                 <span className="truncate">{ev.titulo}</span>
@@ -448,80 +515,70 @@
               </div>
             )}
 
-            {/* VISÃO 2: LISTA DE AGENDAMENTOS */}
+            {/* VISÃO LISTA */}
             {viewMode === 'lista' && (
-              <div>
-                {reservasFiltradas.length === 0 ? (
-                  <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-sm">
-                    <div className="text-4xl mb-3">📅</div>
-                    <h3 className="font-bold text-slate-700 text-base">Nenhum agendamento encontrado</h3>
-                    <p className="text-sm text-slate-400 mt-1 max-w-sm mx-auto">
-                      Clique em "Agendar" no topo da tela para registrar o primeiro evento.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                    {reservasFiltradas.map(r => {
-                      const cong = congregacoes.find(c => c.id === r.congregacaoId);
-                      const espaco = ESPACOS_SALAO.find(e => e.id === r.espacoId);
-                      return (
-                        <div key={r.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col justify-between hover:shadow-md transition">
-                          <div>
-                            <div className="flex items-center justify-between mb-2">
-                              <span
-                                className="text-xs font-bold px-2.5 py-0.5 rounded-full text-white"
-                                style={{ backgroundColor: cong?.hex || '#475569' }}
-                              >
-                                {cong?.nome}
-                              </span>
-                              <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                                {espaco?.label}
-                              </span>
-                            </div>
-                            <h4 className="font-bold text-slate-800 text-base leading-snug">{r.titulo}</h4>
-                            <p className="text-xs text-blue-600 font-semibold mt-0.5">
-                              {TIPOS_EVENTO.find(t => t.id === r.tipoEvento)?.label || r.tipoEvento}
-                            </p>
-
-                            <div className="mt-3 space-y-1.5 text-xs text-slate-600">
-                              <div className="flex items-center gap-1.5">
-                                <span>📆</span>
-                                <span className="font-semibold text-slate-800">{r.data.split('-').reverse().join('/')}</span>
-                                <span>⏰</span>
-                                <span>{r.horaInicio} às {r.horaFim}</span>
-                              </div>
-                              {r.responsavel && (
-                                <div className="flex items-center gap-1.5">
-                                  <span>👤</span>
-                                  <span>Resp: <strong>{r.responsavel}</strong> {r.telefone && `(${r.telefone})`}</span>
-                                </div>
-                              )}
-                              {r.observacoes && (
-                                <p className="text-slate-500 italic mt-2 bg-slate-50 p-2 rounded text-xs border border-slate-100">
-                                  "{r.observacoes}"
-                                </p>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
-                            <button
-                              onClick={() => handleExcluir(r.id)}
-                              className="text-xs text-red-600 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50"
-                            >
-                              Excluir
-                            </button>
-                          </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {eventosFiltrados.map(ev => {
+                  const cong = congregacoes.find(c => c.id === ev.congregacaoId);
+                  const espaco = ESPACOS_SALAO.find(e => e.id === ev.espacoId);
+                  return (
+                    <div key={ev.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col justify-between hover:shadow-md transition">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span
+                            className="text-xs font-bold px-2.5 py-0.5 rounded-full text-white"
+                            style={{ backgroundColor: cong?.hex || '#475569' }}
+                          >
+                            {cong?.nome}
+                          </span>
+                          <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                            {espaco?.label}
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        <h4 className="font-bold text-slate-800 text-base leading-snug">{ev.titulo}</h4>
+                        <p className="text-xs text-blue-600 font-semibold mt-0.5">
+                          {TIPOS_EVENTO.find(t => t.id === ev.tipoEvento)?.label || ev.tipoEvento}
+                        </p>
+
+                        <div className="mt-3 space-y-1.5 text-xs text-slate-600">
+                          <div className="flex items-center gap-1.5">
+                            <span>📆</span>
+                            <span className="font-semibold text-slate-800">{ev.data.split('-').reverse().join('/')}</span>
+                            <span>⏰</span>
+                            <span>{ev.horaInicio} às {ev.horaFim}</span>
+                          </div>
+                          {ev.isFixa && (
+                            <span className="inline-block bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded">
+                              Reunião Fixa da Semana
+                            </span>
+                          )}
+                          {ev.responsavel && !ev.isFixa && (
+                            <div className="flex items-center gap-1.5">
+                              <span>👤</span>
+                              <span>Resp: <strong>{ev.responsavel}</strong> {ev.telefone && `(${ev.telefone})`}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {!ev.isFixa && (
+                        <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
+                          <button
+                            onClick={() => handleExcluir(ev.id, false)}
+                            className="text-xs text-red-600 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50"
+                          >
+                            Excluir
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </main>
 
-          {/* MODAL DETALHES DO EVENTO CLICADO NO CALENDÁRIO */}
+          {/* MODAL DETALHES */}
           {eventoSelecionado && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-xl">
@@ -540,20 +597,29 @@
 
                 <div className="space-y-2 text-xs text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-200 mb-4">
                   <div><strong>Local:</strong> {ESPACOS_SALAO.find(e => e.id === eventoSelecionado.espacoId)?.label}</div>
-                  <div><strong>Tipo:</strong> {TIPOS_EVENTO.find(t => t.id === eventoSelecionado.tipoEvento)?.label || eventoSelecionado.tipoEvento}</div>
                   <div><strong>Data:</strong> {eventoSelecionado.data.split('-').reverse().join('/')}</div>
                   <div><strong>Horário:</strong> {eventoSelecionado.horaInicio} às {eventoSelecionado.horaFim}</div>
-                  {eventoSelecionado.responsavel && <div><strong>Responsável:</strong> {eventoSelecionado.responsavel} {eventoSelecionado.telefone && `(${eventoSelecionado.telefone})`}</div>}
-                  {eventoSelecionado.observacoes && <div><strong>Obs:</strong> {eventoSelecionado.observacoes}</div>}
+                  {eventoSelecionado.isFixa ? (
+                    <div className="text-blue-700 font-semibold bg-blue-50 p-2 rounded border border-blue-100">
+                      ℹ️ Reunião semanal fixa do rodízio das congregações.
+                    </div>
+                  ) : (
+                    <>
+                      {eventoSelecionado.responsavel && <div><strong>Responsável:</strong> {eventoSelecionado.responsavel} {eventoSelecionado.telefone && `(${eventoSelecionado.telefone})`}</div>}
+                      {eventoSelecionado.observacoes && <div><strong>Obs:</strong> {eventoSelecionado.observacoes}</div>}
+                    </>
+                  )}
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <button
-                    onClick={() => handleExcluir(eventoSelecionado.id)}
-                    className="text-xs text-red-600 font-bold hover:underline"
-                  >
-                    Excluir Agendamento
-                  </button>
+                  {!eventoSelecionado.isFixa ? (
+                    <button
+                      onClick={() => handleExcluir(eventoSelecionado.id, false)}
+                      className="text-xs text-red-600 font-bold hover:underline"
+                    >
+                      Excluir Agendamento
+                    </button>
+                  ) : <div></div>}
                   <button
                     onClick={() => setEventoSelecionado(null)}
                     className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold"
@@ -565,7 +631,7 @@
             </div>
           )}
 
-          {/* MODAL: NOVO AGENDAMENTO */}
+          {/* MODAL NOVO AGENDAMENTO */}
           {modalAberto && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-lg rounded-2xl p-6 shadow-xl max-h-[90vh] overflow-y-auto">
@@ -579,7 +645,7 @@
                     <input
                       required
                       type="text"
-                      placeholder="Ex: Discurso de Casamento - Fulano & Ciclana"
+                      placeholder="Ex: Discurso de Casamento, Limpeza Geral..."
                       value={novoEvento.titulo}
                       onChange={e => setNovoEvento({ ...novoEvento, titulo: e.target.value })}
                       className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -674,7 +740,7 @@
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Observações</label>
                     <textarea
                       rows="2"
-                      placeholder="Detalhes sobre equipamentos, chaves, etc..."
+                      placeholder="Detalhes adicionais..."
                       value={novoEvento.observacoes}
                       onChange={e => setNovoEvento({ ...novoEvento, observacoes: e.target.value })}
                       className="w-full text-sm border border-slate-300 rounded-lg p-2 focus:outline-none"
@@ -701,7 +767,7 @@
             </div>
           )}
 
-          {/* MODAL: CONFIGURAÇÕES & RODÍZIO INFINITO */}
+          {/* MODAL CONFIGURAÇÕES & RODÍZIO INFINITO */}
           {modalConfigAberto && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-xl rounded-2xl p-6 shadow-xl max-h-[90vh] overflow-y-auto">
@@ -711,16 +777,16 @@
                 </div>
 
                 <div className="space-y-6">
-                  {/* Gestão do Rodízio Anual */}
+                  {/* Rodízio Anual */}
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                     <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-bold text-sm text-slate-800">Rodízio Anual das Reuniões</h4>
+                      <h4 className="font-bold text-sm text-slate-800">Escala de Reuniões</h4>
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => setAnoEdicao(prev => prev - 1)}
                           className="px-2 py-1 text-xs bg-white border border-slate-300 rounded hover:bg-slate-100 font-bold"
                         >◀</button>
-                        <span className="font-bold text-slate-800 text-sm px-1">{anoEdicao}</span>
+                        <span className="font-bold text-slate-800 text-sm px-1">Ano {anoEdicao}</span>
                         <button
                           onClick={() => setAnoEdicao(prev => prev + 1)}
                           className="px-2 py-1 text-xs bg-white border border-slate-300 rounded hover:bg-slate-100 font-bold"
@@ -729,69 +795,98 @@
                     </div>
 
                     <p className="text-xs text-slate-500 mb-3">
-                      Dias e horários das congregações para o ano de <strong>{anoEdicao}</strong> (sem limite de anos):
+                      Defina os dias e horários das reuniões das congregações para o ano de <strong>{anoEdicao}</strong>:
                     </p>
 
                     {congregacoes.map(cong => {
-                      const escalaAno = rotacoes[anoEdicao]?.[cong.id] || {
-                        meioSemana: { diaNome: 'Terça-feira', horaInicio: '19:30', horaFim: '21:15' },
-                        fimSemana: { diaNome: 'Domingo', horaInicio: '19:00', horaFim: '20:45' }
-                      };
+                      const escalaAno = rotacoes[String(anoEdicao)]?.[cong.id] || rotacoes["2026"]?.[cong.id] || CONFIG_RODIZIO_DEFAULT["2026"][cong.id];
 
                       return (
-                        <div key={cong.id} className="bg-white p-3 rounded-lg border border-slate-200 mb-2">
+                        <div key={cong.id} className="bg-white p-3 rounded-lg border border-slate-200 mb-3">
                           <span className="text-xs font-bold px-2 py-0.5 rounded text-white inline-block mb-2" style={{ backgroundColor: cong.hex }}>
                             {cong.nome}
                           </span>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div>
-                              <span className="font-semibold text-slate-600">Meio de Semana:</span>
-                              <input
-                                type="text"
-                                className="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-xs"
-                                value={`${escalaAno.meioSemana.diaNome} às ${escalaAno.meioSemana.horaInicio}`}
-                                onChange={(e) => {
-                                  const novo = { ...rotacoes };
-                                  if (!novo[anoEdicao]) novo[anoEdicao] = {};
-                                  if (!novo[anoEdicao][cong.id]) novo[anoEdicao][cong.id] = { ...escalaAno };
-                                  novo[anoEdicao][cong.id].meioSemana.diaNome = e.target.value.split(' às ')[0] || e.target.value;
-                                  setRotacoes(novo);
-                                }}
-                              />
+                          
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                            {/* Meio de Semana */}
+                            <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                              <span className="font-bold text-slate-700 block mb-1">Meio de Semana:</span>
+                              <div className="space-y-1">
+                                <select
+                                  value={escalaAno.meioSemana.diaSemana}
+                                  onChange={(e) => {
+                                    const novo = { ...rotacoes };
+                                    const anoStr = String(anoEdicao);
+                                    if (!novo[anoStr]) novo[anoStr] = JSON.parse(JSON.stringify(rotacoes["2026"] || CONFIG_RODIZIO_DEFAULT["2026"]));
+                                    novo[anoStr][cong.id].meioSemana.diaSemana = Number(e.target.value);
+                                    novo[anoStr][cong.id].meioSemana.diaNome = DIAS_OPCOES.find(d => d.valor === Number(e.target.value))?.nome || '';
+                                    setRotacoes(novo);
+                                  }}
+                                  className="w-full border border-slate-300 rounded px-2 py-1 text-xs bg-white"
+                                >
+                                  {DIAS_OPCOES.map(d => (
+                                    <option key={d.valor} value={d.valor}>{d.nome}</option>
+                                  ))}
+                                </select>
+                                <div className="flex items-center gap-1">
+                                  <span>Início:</span>
+                                  <input
+                                    type="time"
+                                    value={escalaAno.meioSemana.horaInicio}
+                                    onChange={(e) => {
+                                      const novo = { ...rotacoes };
+                                      const anoStr = String(anoEdicao);
+                                      if (!novo[anoStr]) novo[anoStr] = JSON.parse(JSON.stringify(rotacoes["2026"] || CONFIG_RODIZIO_DEFAULT["2026"]));
+                                      novo[anoStr][cong.id].meioSemana.horaInicio = e.target.value;
+                                      setRotacoes(novo);
+                                    }}
+                                    className="border border-slate-300 rounded px-1 py-0.5 text-xs w-full bg-white"
+                                  />
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <span className="font-semibold text-slate-600">Fim de Semana:</span>
-                              <input
-                                type="text"
-                                className="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-xs"
-                                value={`${escalaAno.fimSemana.diaNome} às ${escalaAno.fimSemana.horaInicio}`}
-                                onChange={(e) => {
-                                  const novo = { ...rotacoes };
-                                  if (!novo[anoEdicao]) novo[anoEdicao] = {};
-                                  if (!novo[anoEdicao][cong.id]) novo[anoEdicao][cong.id] = { ...escalaAno };
-                                  novo[anoEdicao][cong.id].fimSemana.diaNome = e.target.value.split(' às ')[0] || e.target.value;
-                                  setRotacoes(novo);
-                                }}
-                              />
+
+                            {/* Fim de Semana */}
+                            <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                              <span className="font-bold text-slate-700 block mb-1">Fim de Semana:</span>
+                              <div className="space-y-1">
+                                <select
+                                  value={escalaAno.fimSemana.diaSemana}
+                                  onChange={(e) => {
+                                    const novo = { ...rotacoes };
+                                    const anoStr = String(anoEdicao);
+                                    if (!novo[anoStr]) novo[anoStr] = JSON.parse(JSON.stringify(rotacoes["2026"] || CONFIG_RODIZIO_DEFAULT["2026"]));
+                                    novo[anoStr][cong.id].fimSemana.diaSemana = Number(e.target.value);
+                                    novo[anoStr][cong.id].fimSemana.diaNome = DIAS_OPCOES.find(d => d.valor === Number(e.target.value))?.nome || '';
+                                    setRotacoes(novo);
+                                  }}
+                                  className="w-full border border-slate-300 rounded px-2 py-1 text-xs bg-white"
+                                >
+                                  {DIAS_OPCOES.map(d => (
+                                    <option key={d.valor} value={d.valor}>{d.nome}</option>
+                                  ))}
+                                </select>
+                                <div className="flex items-center gap-1">
+                                  <span>Início:</span>
+                                  <input
+                                    type="time"
+                                    value={escalaAno.fimSemana.horaInicio}
+                                    onChange={(e) => {
+                                      const novo = { ...rotacoes };
+                                      const anoStr = String(anoEdicao);
+                                      if (!novo[anoStr]) novo[anoStr] = JSON.parse(JSON.stringify(rotacoes["2026"] || CONFIG_RODIZIO_DEFAULT["2026"]));
+                                      novo[anoStr][cong.id].fimSemana.horaInicio = e.target.value;
+                                      setRotacoes(novo);
+                                    }}
+                                    className="border border-slate-300 rounded px-1 py-0.5 text-xs w-full bg-white"
+                                  />
+                                </div>
+                              </div>
                             </div>
                           </div>
                         </div>
                       );
                     })}
-                  </div>
-
-                  {/* Espaços Físicos Permitidos */}
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <h4 className="font-bold text-sm text-slate-800 mb-1">Espaços do Salão</h4>
-                    <p className="text-xs text-slate-500 mb-2">Espaços cadastrados:</p>
-                    <div className="flex gap-2">
-                      <span className="text-xs font-semibold bg-white border border-slate-300 px-3 py-1.5 rounded-lg text-slate-700">
-                        🏛️ Salão Principal
-                      </span>
-                      <span className="text-xs font-semibold bg-white border border-slate-300 px-3 py-1.5 rounded-lg text-slate-700">
-                        🚪 Sala B
-                      </span>
-                    </div>
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2 border-t">
