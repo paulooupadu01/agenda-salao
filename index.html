@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agenda do Salão do Reino</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Babel -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body { background-color: #f1f5f9; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Firebase Modular SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+    import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAgIFo9xBec84IDHdxw1jZFVVveZZpDw-s",
+      authDomain: "agenda-salao-71ce7.firebaseapp.com",
+      projectId: "agenda-salao-71ce7",
+      storageBucket: "agenda-salao-71ce7.firebasestorage.app",
+      messagingSenderId: "656234004138",
+      appId: "1:656234004138:web:199c68a7b48e9d0d2adad3"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    window.db = getFirestore(app);
+    window.auth = getAuth(app);
+    window.firestoreOps = { collection, doc, setDoc, deleteDoc, onSnapshot };
+
+    signInAnonymously(window.auth)
+      .then(() => console.log("Firebase Auth: Conectado com sucesso"))
+      .catch((err) => console.warn("Firebase Auth aviso:", err.message));
+  </script>
+
+  <!-- Aplicação Principal -->
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    const CONGREGACOES_DEFAULT = [
+      { id: 'espanhola', nome: 'Espanhola', hex: '#2563eb' },
+      { id: 'itinga', nome: 'Itinga', hex: '#059669' },
+      { id: 'profipo', nome: 'Profipo', hex: '#d97706' }
+    ];
+
+    const ESPACOS_SALAO = [
+      { id: 'salao_principal', label: 'Salão Principal' },
+      { id: 'sala_b', label: 'Sala B' }
+    ];
+
+    const TIPOS_EVENTO = [
+      { id: 'reuniao_meio_semana', label: 'Reunião Vida e Ministério' },
+      { id: 'reuniao_fim_semana', label: 'Reunião Pública e Sentinela' },
+      { id: 'visita_sc', label: 'Visita do Superint. de Circuito' },
+      { id: 'reuniao_anciaos_servos', label: 'Reunião de Anciãos / Servos' },
+      { id: 'escola_reino_curso', label: 'Escola / Curso Bíblico' },
+      { id: 'limpeza_geral', label: 'Limpeza e Manutenção' },
+      { id: 'casamento', label: 'Discurso de Casamento' },
+      { id: 'funeral', label: 'Discurso Fúnebre' },
+      { id: 'saida_campo_extra', label: 'Saída de Campo' },
+      { id: 'outro', label: 'Outro Evento' }
+    ];
+
+    const CONFIG_RODIZIO_DEFAULT = {
+      "2026": {
+        espanhola: { meioSemana: { diaSemana: 2, diaNome: "Terça-feira", horaInicio: "19:30", horaFim: "21:15" }, fimSemana: { diaSemana: 0, diaNome: "Domingo", horaInicio: "09:00", horaFim: "10:45" } },
+        itinga: { meioSemana: { diaSemana: 3, diaNome: "Quarta-feira", horaInicio: "19:30", horaFim: "21:15" }, fimSemana: { diaSemana: 6, diaNome: "Sábado", horaInicio: "19:00", horaFim: "20:45" } },
+        profipo: { meioSemana: { diaSemana: 4, diaNome: "Quinta-feira", horaInicio: "19:30", horaFim: "21:15" }, fimSemana: { diaSemana: 0, diaNome: "Domingo", horaInicio: "19:00", horaFim: "20:45" } }
+      }
+    };
+
+    function App() {
+      const [reservas, setReservas] = useState([]);
+      const [congAtiva, setCongAtiva] = useState('todas');
+      const [filtroEspaco, setFiltroEspaco] = useState('todos');
+      const [viewMode, setViewMode] = useState('mes'); // 'mes', 'semana', 'lista'
+      const [currentDate, setCurrentDate] = useState(new Date());
+      const [congregacoes, setCongregacoes] = useState(CONGREGACOES_DEFAULT);
+      const [rotacoes, setRotacoes] = useState(CONFIG_RODIZIO_DEFAULT);
+      const [statusConexao, setStatusConexao] = useState('Conectando ao Firebase...');
+
+      const [modalAberto, setModalAberto] = useState(false);
+      const [modalConfigAberto, setModalConfigAberto] = useState(false);
+      const [eventoSelecionado, setEventoSelecionado] = useState(null);
+      const [anoEdicao, setAnoEdicao] = useState(new Date().getFullYear());
+
+      const [novoEvento, setNovoEvento] = useState({
+        titulo: '',
+        congregacaoId: 'espanhola',
+        espacoId: 'salao_principal',
+        tipoEvento: 'outro',
+        data: new Date().toISOString().split('T')[0],
+        horaInicio: '19:00',
+        horaFim: '21:00',
+        responsavel: '',
+        telefone: '',
+        observacoes: ''
+      });
+
+      // Sincronização em tempo real
+      useEffect(() => {
+        let unsubscribeReservas = null;
+        let unsubscribeConfig = null;
+
+        const checkFirebase = setInterval(() => {
+          if (window.db && window.firestoreOps) {
+            clearInterval(checkFirebase);
+            const { collection, onSnapshot, doc } = window.firestoreOps;
+
+            // Escutar agendamentos
+            unsubscribeReservas = onSnapshot(collection(window.db, 'reservas_salao'), (snapshot) => {
+              const dados = [];
+              snapshot.forEach((d) => dados.push({ id: d.id, ...d.data() }));
+              dados.sort((a, b) => (a.data + a.horaInicio).localeCompare(b.data + b.horaInicio));
+              setReservas(dados);
+              setStatusConexao('Tempo real ativo');
+            }, (error) => {
+              console.error("Erro ao ler reservas:", error);
+              setStatusConexao('Erro de conexão com o banco');
+            });
+
+            // Escutar configurações
+            unsubscribeConfig = onSnapshot(doc(window.db, 'configuracoes', 'geral'), (docSnap) => {
+              if (docSnap.exists()) {
+                const data = docSnap.data();
+                if (data.rotacoes) setRotacoes(data.rotacoes);
+                if (data.congregacoes) setCongregacoes(data.congregacoes);
+              }
+            });
+          }
+        }, 150);
+
+        return () => {
+          clearInterval(checkFirebase);
+          if (unsubscribeReservas) unsubscribeReservas();
+          if (unsubscribeConfig) unsubscribeConfig();
+        };
+      }, []);
+
+      // Criar agendamento
+      const handleSalvarReserva = async (e) => {
+        e.preventDefault();
+        if (!window.db || !window.firestoreOps) {
+          alert("Banco de dados ainda não conectou. Verifique sua internet.");
+          return;
+        }
+        const { collection, doc, setDoc } = window.firestoreOps;
+        const id = 'res_' + Date.now();
+        await setDoc(doc(collection(window.db, 'reservas_salao'), id), novoEvento);
+        setModalAberto(false);
+        setNovoEvento({
+          titulo: '',
+          congregacaoId: 'espanhola',
+          espacoId: 'salao_principal',
+          tipoEvento: 'outro',
+          data: new Date().toISOString().split('T')[0],
+          horaInicio: '19:00',
+          horaFim: '21:00',
+          responsavel: '',
+          telefone: '',
+          observacoes: ''
+        });
+      };
+
+      // Excluir
+      const handleExcluir = async (id) => {
+        if (!confirm('Deseja excluir este agendamento?')) return;
+        if (!window.db || !window.firestoreOps) return;
+        const { doc, deleteDoc } = window.firestoreOps;
+        await deleteDoc(doc(window.db, 'reservas_salao', id));
+        setEventoSelecionado(null);
+      };
+
+      // Salvar Configurações
+      const handleSalvarConfig = async () => {
+        if (!window.db || !window.firestoreOps) return;
+        const { doc, setDoc } = window.firestoreOps;
+        await setDoc(doc(window.db, 'configuracoes', 'geral'), {
+          rotacoes,
+          congregacoes
+        }, { merge: true });
+        setModalConfigAberto(false);
+      };
+
+      // Navegação de Datas
+      const handlePrev = () => {
+        const d = new Date(currentDate);
+        if (viewMode === 'mes') d.setMonth(d.getMonth() - 1);
+        else d.setDate(d.getDate() - 7);
+        setCurrentDate(d);
+      };
+
+      const handleNext = () => {
+        const d = new Date(currentDate);
+        if (viewMode === 'mes') d.setMonth(d.getMonth() + 1);
+        else d.setDate(d.getDate() + 7);
+        setCurrentDate(d);
+      };
+
+      const handleHoje = () => setCurrentDate(new Date());
+
+      // Filtros
+      const reservasFiltradas = useMemo(() => {
+        return reservas.filter(r => {
+          const matchCong = congAtiva === 'todas' || r.congregacaoId === congAtiva;
+          const matchEspaco = filtroEspaco === 'todos' || r.espacoId === filtroEspaco;
+          return matchCong && matchEspaco;
+        });
+      }, [reservas, congAtiva, filtroEspaco]);
+
+      // Dias do Mês para o Calendário
+      const diasDoMes = useMemo(() => {
+        const ano = currentDate.getFullYear();
+        const mes = currentDate.getMonth();
+        const primeiroDiaSemana = new Date(ano, mes, 1).getDay();
+        const totalDias = new Date(ano, mes + 1, 0).getDate();
+
+        const dias = [];
+        for (let i = 0; i < primeiroDiaSemana; i++) {
+          dias.push(null);
+        }
+        for (let d = 1; d <= totalDias; d++) {
+          const dataFormatada = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+          dias.push({
+            diaNumero: d,
+            dataStr: dataFormatada,
+            eventos: reservasFiltradas.filter(r => r.data === dataFormatada)
+          });
+        }
+        return dias;
+      }, [currentDate, reservasFiltradas]);
+
+      const nomeMesAno = currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+      return (
+        <div className="min-h-screen pb-12">
+          {/* HEADER PRINCIPAL */}
+          <header className="bg-slate-900 text-white sticky top-0 z-20 shadow-md">
+            <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-lg shadow">
+                  SR
+                </div>
+                <div>
+                  <h1 className="font-bold text-base md:text-lg leading-tight">Salão do Reino</h1>
+                  <p className="text-xs text-slate-400">Espanhola • Itinga • Profipo</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setModalConfigAberto(true)}
+                  className="px-3 py-2 text-xs md:text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition"
+                >
+                  ⚙️ Configurações
+                </button>
+                <button
+                  onClick={() => setModalAberto(true)}
+                  className="px-3.5 py-2 text-xs md:text-sm font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-lg shadow transition"
+                >
+                  ➕ Agendar
+                </button>
+              </div>
+            </div>
+
+            {/* SELETORES E VISUALIZAÇÕES */}
+            <div className="bg-slate-800 border-t border-slate-700 px-4 py-2.5">
+              <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
+                {/* Abas de Congregações */}
+                <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
+                  <button
+                    onClick={() => setCongAtiva('todas')}
+                    className={`px-3 py-1 text-xs rounded-full font-medium transition ${congAtiva === 'todas' ? 'bg-white text-slate-900 font-bold' : 'bg-slate-700 text-slate-300'}`}
+                  >
+                    Todas
+                  </button>
+                  {congregacoes.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => setCongAtiva(c.id)}
+                      className={`px-3 py-1 text-xs rounded-full font-medium transition ${congAtiva === c.id ? 'text-white font-bold ring-2 ring-white shadow' : 'text-slate-300 bg-slate-700'}`}
+                      style={{ backgroundColor: congAtiva === c.id ? c.hex : undefined }}
+                    >
+                      {c.nome}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Filtro Espaço & Modo de Visão */}
+                <div className="flex items-center gap-2">
+                  <select
+                    value={filtroEspaco}
+                    onChange={(e) => setFiltroEspaco(e.target.value)}
+                    className="bg-slate-700 text-xs text-white rounded-lg px-2.5 py-1.5 border border-slate-600 focus:outline-none"
+                  >
+                    <option value="todos">Todos os Espaços</option>
+                    <option value="salao_principal">Salão Principal</option>
+                    <option value="sala_b">Sala B</option>
+                  </select>
+
+                  <div className="bg-slate-900 p-0.5 rounded-lg flex border border-slate-700 text-xs">
+                    <button
+                      onClick={() => setViewMode('mes')}
+                      className={`px-2.5 py-1 rounded-md transition ${viewMode === 'mes' ? 'bg-blue-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
+                    >
+                      Mês
+                    </button>
+                    <button
+                      onClick={() => setViewMode('lista')}
+                      className={`px-2.5 py-1 rounded-md transition ${viewMode === 'lista' ? 'bg-blue-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
+                    >
+                      Lista ({reservasFiltradas.length})
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          {/* STATUS DE CONEXÃO DISCRETO */}
+          <div className="max-w-6xl mx-auto px-4 mt-2 flex justify-between items-center text-[11px] text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full ${statusConexao === 'Tempo real ativo' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
+              {statusConexao}
+            </span>
+            <span>{reservasFiltradas.length} agendamento(s) no total</span>
+          </div>
+
+          <main className="max-w-6xl mx-auto px-4 mt-3">
+            {/* BARRA DE NAVEGAÇÃO DE DATA (MÊS) */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handlePrev}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm"
+                >
+                  ◀
+                </button>
+                <button
+                  onClick={handleHoje}
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs"
+                >
+                  Hoje
+                </button>
+                <button
+                  onClick={handleNext}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm"
+                >
+                  ▶
+                </button>
+              </div>
+
+              <h2 className="font-bold text-slate-800 text-base md:text-lg capitalize">
+                {nomeMesAno}
+              </h2>
+
+              <button
+                onClick={() => setModalAberto(true)}
+                className="hidden sm:inline-flex text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+              >
+                + Agendar nesta data
+              </button>
+            </div>
+
+            {/* VISÃO 1: GRADE DO MÊS (CALENDÁRIO) */}
+            {viewMode === 'mes' && (
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                {/* Dias da Semana */}
+                <div className="grid grid-cols-7 bg-slate-100 border-b border-slate-200 text-center font-bold text-xs text-slate-600 py-2.5">
+                  <span>Dom</span>
+                  <span>Seg</span>
+                  <span>Ter</span>
+                  <span>Qua</span>
+                  <span>Qui</span>
+                  <span>Sex</span>
+                  <span>Sáb</span>
+                </div>
+
+                {/* Grade de Dias */}
+                <div className="grid grid-cols-7 auto-rows-fr">
+                  {diasDoMes.map((dia, idx) => {
+                    if (!dia) {
+                      return <div key={`empty-${idx}`} className="min-h-[90px] md:min-h-[115px] bg-slate-50/50 border-b border-r border-slate-100"></div>;
+                    }
+
+                    const ehHoje = new Date().toISOString().split('T')[0] === dia.dataStr;
+
+                    return (
+                      <div
+                        key={dia.dataStr}
+                        onClick={() => {
+                          setNovoEvento(prev => ({ ...prev, data: dia.dataStr }));
+                          if (dia.eventos.length === 0) setModalAberto(true);
+                        }}
+                        className={`min-h-[90px] md:min-h-[115px] p-1.5 md:p-2 border-b border-r border-slate-100 flex flex-col justify-between cursor-pointer transition hover:bg-blue-50/40 ${ehHoje ? 'bg-blue-50/20' : 'bg-white'}`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <span className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${ehHoje ? 'bg-blue-600 text-white' : 'text-slate-700'}`}>
+                            {dia.diaNumero}
+                          </span>
+                          {dia.eventos.length > 0 && (
+                            <span className="text-[10px] text-slate-400 font-semibold md:hidden">
+                              {dia.eventos.length}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Pílulas de eventos */}
+                        <div className="space-y-1 mt-1 overflow-y-auto max-h-[75px]">
+                          {dia.eventos.map(ev => {
+                            const cong = congregacoes.find(c => c.id === ev.congregacaoId);
+                            const espaco = ESPACOS_SALAO.find(e => e.id === ev.espacoId);
+                            return (
+                              <div
+                                key={ev.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEventoSelecionado(ev);
+                                }}
+                                className="text-[11px] leading-tight px-1.5 py-1 rounded font-medium text-white shadow-xs truncate flex items-center gap-1 cursor-pointer hover:opacity-90"
+                                style={{ backgroundColor: cong?.hex || '#2563eb' }}
+                                title={`${ev.titulo} (${ev.horaInicio} - ${ev.horaFim}) - ${espaco?.label}`}
+                              >
+                                <span className="font-bold text-[9px] opacity-90">{ev.horaInicio}</span>
+                                <span className="truncate">{ev.titulo}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* VISÃO 2: LISTA DE AGENDAMENTOS */}
+            {viewMode === 'lista' && (
+              <div>
+                {reservasFiltradas.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-sm">
+                    <div className="text-4xl mb-3">📅</div>
+                    <h3 className="font-bold text-slate-700 text-base">Nenhum agendamento encontrado</h3>
+                    <p className="text-sm text-slate-400 mt-1 max-w-sm mx-auto">
+                      Clique em "Agendar" no topo da tela para registrar o primeiro evento.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                    {reservasFiltradas.map(r => {
+                      const cong = congregacoes.find(c => c.id === r.congregacaoId);
+                      const espaco = ESPACOS_SALAO.find(e => e.id === r.espacoId);
+                      return (
+                        <div key={r.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col justify-between hover:shadow-md transition">
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span
+                                className="text-xs font-bold px-2.5 py-0.5 rounded-full text-white"
+                                style={{ backgroundColor: cong?.hex || '#475569' }}
+                              >
+                                {cong?.nome}
+                              </span>
+                              <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                                {espaco?.label}
+                              </span>
+                            </div>
+                            <h4 className="font-bold text-slate-800 text-base leading-snug">{r.titulo}</h4>
+                            <p className="text-xs text-blue-600 font-semibold mt-0.5">
+                              {TIPOS_EVENTO.find(t => t.id === r.tipoEvento)?.label || r.tipoEvento}
+                            </p>
+
+                            <div className="mt-3 space-y-1.5 text-xs text-slate-600">
+                              <div className="flex items-center gap-1.5">
+                                <span>📆</span>
+                                <span className="font-semibold text-slate-800">{r.data.split('-').reverse().join('/')}</span>
+                                <span>⏰</span>
+                                <span>{r.horaInicio} às {r.horaFim}</span>
+                              </div>
+                              {r.responsavel && (
+                                <div className="flex items-center gap-1.5">
+                                  <span>👤</span>
+                                  <span>Resp: <strong>{r.responsavel}</strong> {r.telefone && `(${r.telefone})`}</span>
+                                </div>
+                              )}
+                              {r.observacoes && (
+                                <p className="text-slate-500 italic mt-2 bg-slate-50 p-2 rounded text-xs border border-slate-100">
+                                  "{r.observacoes}"
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
+                            <button
+                              onClick={() => handleExcluir(r.id)}
+                              className="text-xs text-red-600 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50"
+                            >
+                              Excluir
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
+
+          {/* MODAL DETALHES DO EVENTO CLICADO NO CALENDÁRIO */}
+          {eventoSelecionado && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-xl">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <span
+                      className="text-xs font-bold px-2.5 py-0.5 rounded-full text-white inline-block mb-1"
+                      style={{ backgroundColor: congregacoes.find(c => c.id === eventoSelecionado.congregacaoId)?.hex || '#2563eb' }}
+                    >
+                      {congregacoes.find(c => c.id === eventoSelecionado.congregacaoId)?.nome}
+                    </span>
+                    <h3 className="font-bold text-lg text-slate-800 leading-tight">{eventoSelecionado.titulo}</h3>
+                  </div>
+                  <button onClick={() => setEventoSelecionado(null)} className="text-slate-400 hover:text-slate-600 text-lg font-bold">✕</button>
+                </div>
+
+                <div className="space-y-2 text-xs text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-200 mb-4">
+                  <div><strong>Local:</strong> {ESPACOS_SALAO.find(e => e.id === eventoSelecionado.espacoId)?.label}</div>
+                  <div><strong>Tipo:</strong> {TIPOS_EVENTO.find(t => t.id === eventoSelecionado.tipoEvento)?.label || eventoSelecionado.tipoEvento}</div>
+                  <div><strong>Data:</strong> {eventoSelecionado.data.split('-').reverse().join('/')}</div>
+                  <div><strong>Horário:</strong> {eventoSelecionado.horaInicio} às {eventoSelecionado.horaFim}</div>
+                  {eventoSelecionado.responsavel && <div><strong>Responsável:</strong> {eventoSelecionado.responsavel} {eventoSelecionado.telefone && `(${eventoSelecionado.telefone})`}</div>}
+                  {eventoSelecionado.observacoes && <div><strong>Obs:</strong> {eventoSelecionado.observacoes}</div>}
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <button
+                    onClick={() => handleExcluir(eventoSelecionado.id)}
+                    className="text-xs text-red-600 font-bold hover:underline"
+                  >
+                    Excluir Agendamento
+                  </button>
+                  <button
+                    onClick={() => setEventoSelecionado(null)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: NOVO AGENDAMENTO */}
+          {modalAberto && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-lg rounded-2xl p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-4 border-b pb-2">
+                  <h3 className="font-bold text-lg text-slate-800">Novo Agendamento</h3>
+                  <button onClick={() => setModalAberto(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+                </div>
+                <form onSubmit={handleSalvarReserva} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Título do Evento *</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Ex: Discurso de Casamento - Fulano & Ciclana"
+                      value={novoEvento.titulo}
+                      onChange={e => setNovoEvento({ ...novoEvento, titulo: e.target.value })}
+                      className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Congregação *</label>
+                      <select
+                        value={novoEvento.congregacaoId}
+                        onChange={e => setNovoEvento({ ...novoEvento, congregacaoId: e.target.value })}
+                        className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:outline-none"
+                      >
+                        {congregacoes.map(c => (
+                          <option key={c.id} value={c.id}>{c.nome}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Espaço *</label>
+                      <select
+                        value={novoEvento.espacoId}
+                        onChange={e => setNovoEvento({ ...novoEvento, espacoId: e.target.value })}
+                        className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:outline-none"
+                      >
+                        {ESPACOS_SALAO.map(e => (
+                          <option key={e.id} value={e.id}>{e.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Data *</label>
+                      <input
+                        required
+                        type="date"
+                        value={novoEvento.data}
+                        onChange={e => setNovoEvento({ ...novoEvento, data: e.target.value })}
+                        className="w-full text-sm border border-slate-300 rounded-lg p-2 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Início *</label>
+                      <input
+                        required
+                        type="time"
+                        value={novoEvento.horaInicio}
+                        onChange={e => setNovoEvento({ ...novoEvento, horaInicio: e.target.value })}
+                        className="w-full text-sm border border-slate-300 rounded-lg p-2 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Término *</label>
+                      <input
+                        required
+                        type="time"
+                        value={novoEvento.horaFim}
+                        onChange={e => setNovoEvento({ ...novoEvento, horaFim: e.target.value })}
+                        className="w-full text-sm border border-slate-300 rounded-lg p-2 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Responsável</label>
+                      <input
+                        type="text"
+                        placeholder="Nome do irmão"
+                        value={novoEvento.responsavel}
+                        onChange={e => setNovoEvento({ ...novoEvento, responsavel: e.target.value })}
+                        className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Telefone / WhatsApp</label>
+                      <input
+                        type="text"
+                        placeholder="(47) 99999-9999"
+                        value={novoEvento.telefone}
+                        onChange={e => setNovoEvento({ ...novoEvento, telefone: e.target.value })}
+                        className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Observações</label>
+                    <textarea
+                      rows="2"
+                      placeholder="Detalhes sobre equipamentos, chaves, etc..."
+                      value={novoEvento.observacoes}
+                      onChange={e => setNovoEvento({ ...novoEvento, observacoes: e.target.value })}
+                      className="w-full text-sm border border-slate-300 rounded-lg p-2 focus:outline-none"
+                    ></textarea>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setModalAberto(false)}
+                      className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-lg shadow"
+                    >
+                      Salvar Agendamento
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: CONFIGURAÇÕES & RODÍZIO INFINITO */}
+          {modalConfigAberto && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-xl rounded-2xl p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-4 border-b pb-2">
+                  <h3 className="font-bold text-lg text-slate-800">Configurações Gerais & Rodízio</h3>
+                  <button onClick={() => setModalConfigAberto(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+                </div>
+
+                <div className="space-y-6">
+                  {/* Gestão do Rodízio Anual */}
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-bold text-sm text-slate-800">Rodízio Anual das Reuniões</h4>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setAnoEdicao(prev => prev - 1)}
+                          className="px-2 py-1 text-xs bg-white border border-slate-300 rounded hover:bg-slate-100 font-bold"
+                        >◀</button>
+                        <span className="font-bold text-slate-800 text-sm px-1">{anoEdicao}</span>
+                        <button
+                          onClick={() => setAnoEdicao(prev => prev + 1)}
+                          className="px-2 py-1 text-xs bg-white border border-slate-300 rounded hover:bg-slate-100 font-bold"
+                        >▶</button>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-500 mb-3">
+                      Dias e horários das congregações para o ano de <strong>{anoEdicao}</strong> (sem limite de anos):
+                    </p>
+
+                    {congregacoes.map(cong => {
+                      const escalaAno = rotacoes[anoEdicao]?.[cong.id] || {
+                        meioSemana: { diaNome: 'Terça-feira', horaInicio: '19:30', horaFim: '21:15' },
+                        fimSemana: { diaNome: 'Domingo', horaInicio: '19:00', horaFim: '20:45' }
+                      };
+
+                      return (
+                        <div key={cong.id} className="bg-white p-3 rounded-lg border border-slate-200 mb-2">
+                          <span className="text-xs font-bold px-2 py-0.5 rounded text-white inline-block mb-2" style={{ backgroundColor: cong.hex }}>
+                            {cong.nome}
+                          </span>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <span className="font-semibold text-slate-600">Meio de Semana:</span>
+                              <input
+                                type="text"
+                                className="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-xs"
+                                value={`${escalaAno.meioSemana.diaNome} às ${escalaAno.meioSemana.horaInicio}`}
+                                onChange={(e) => {
+                                  const novo = { ...rotacoes };
+                                  if (!novo[anoEdicao]) novo[anoEdicao] = {};
+                                  if (!novo[anoEdicao][cong.id]) novo[anoEdicao][cong.id] = { ...escalaAno };
+                                  novo[anoEdicao][cong.id].meioSemana.diaNome = e.target.value.split(' às ')[0] || e.target.value;
+                                  setRotacoes(novo);
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <span className="font-semibold text-slate-600">Fim de Semana:</span>
+                              <input
+                                type="text"
+                                className="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-xs"
+                                value={`${escalaAno.fimSemana.diaNome} às ${escalaAno.fimSemana.horaInicio}`}
+                                onChange={(e) => {
+                                  const novo = { ...rotacoes };
+                                  if (!novo[anoEdicao]) novo[anoEdicao] = {};
+                                  if (!novo[anoEdicao][cong.id]) novo[anoEdicao][cong.id] = { ...escalaAno };
+                                  novo[anoEdicao][cong.id].fimSemana.diaNome = e.target.value.split(' às ')[0] || e.target.value;
+                                  setRotacoes(novo);
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Espaços Físicos Permitidos */}
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <h4 className="font-bold text-sm text-slate-800 mb-1">Espaços do Salão</h4>
+                    <p className="text-xs text-slate-500 mb-2">Espaços cadastrados:</p>
+                    <div className="flex gap-2">
+                      <span className="text-xs font-semibold bg-white border border-slate-300 px-3 py-1.5 rounded-lg text-slate-700">
+                        🏛️ Salão Principal
+                      </span>
+                      <span className="text-xs font-semibold bg-white border border-slate-300 px-3 py-1.5 rounded-lg text-slate-700">
+                        🚪 Sala B
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t">
+                    <button
+                      type="button"
+                      onClick={() => setModalConfigAberto(false)}
+                      className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg"
+                    >
+                      Fechar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSalvarConfig}
+                      className="px-5 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-lg shadow"
+                    >
+                      Salvar Alterações
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
