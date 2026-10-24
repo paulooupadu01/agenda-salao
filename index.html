@@ -148,7 +148,7 @@
       const [reservasManuais, setReservasManuais] = useState([]);
       const [congAtiva, setCongAtiva] = useState('todas');
       const [filtroEspaco, setFiltroEspaco] = useState('todos');
-      const [viewMode, setViewMode] = useState('mes'); // 'mes', 'semana', 'dia'
+      const [viewMode, setViewMode] = useState('mes');
       const [currentDate, setCurrentDate] = useState(new Date());
       const [congregacoes, setCongregacoes] = useState(CONGREGACOES_DEFAULT);
       const [rotacoes, setRotacoes] = useState(CONFIG_RODIZIO_DEFAULT);
@@ -208,7 +208,7 @@
         };
       }, []);
 
-      // Reuniões fixas semanais calculadas
+      // Reuniões fixas semanais (Bloqueiam todo o Salão do Reino)
       const reunioesFixasDoAno = useMemo(() => {
         const ano = currentDate.getFullYear();
         const escalaDoAno = rotacoes[String(ano)] || rotacoes["2026"] || CONFIG_RODIZIO_DEFAULT["2026"];
@@ -238,13 +238,14 @@
                   titulo: `Reunião Vida e Ministério (${cong.nome})`,
                   congregacaoId: cong.id,
                   espacoId: 'salao_principal',
+                  bloqueiaTodoPredio: true, // Bloqueia Salão Principal e Sala B
                   tipoEvento: 'reuniao_meio_semana',
                   data: dataStr,
                   horaInicio: configCong.meioSemana.horaInicio || "19:30",
                   horaFim: configCong.meioSemana.horaFim || "21:15",
                   responsavel: 'Corpo de Anciãos',
                   telefone: '',
-                  observacoes: 'Horário semanal fixo',
+                  observacoes: 'Horário semanal fixo (Uso integral do Salão do Reino)',
                   isFixa: true
                 });
               }
@@ -255,13 +256,14 @@
                   titulo: `Reunião Pública e Sentinela (${cong.nome})`,
                   congregacaoId: cong.id,
                   espacoId: 'salao_principal',
+                  bloqueiaTodoPredio: true, // Bloqueia Salão Principal e Sala B
                   tipoEvento: 'reuniao_fim_semana',
                   data: dataStr,
                   horaInicio: configCong.fimSemana.horaInicio || "19:00",
                   horaFim: configCong.fimSemana.horaFim || "20:45",
                   responsavel: 'Corpo de Anciãos',
                   telefone: '',
-                  observacoes: 'Horário semanal fixo',
+                  observacoes: 'Horário semanal fixo (Uso integral do Salão do Reino)',
                   isFixa: true
                 });
               }
@@ -279,38 +281,47 @@
         return combinados;
       }, [reunioesFixasDoAno, reservasManuais]);
 
-      // ==========================================
-      // DETECTOR DE CONFLITOS EM TEMPO REAL
-      // ==========================================
+      // =========================================================================
+      // DETECTOR DE CONFLITOS EM TEMPO REAL COM BLOQUEIO INTEGRAL DO PRÉDIO
+      // =========================================================================
       const conflitoDetectado = useMemo(() => {
         if (!modalAberto) return null;
         if (!formEvento.data || !formEvento.horaInicio || !formEvento.horaFim || !formEvento.espacoId) return null;
 
-        // Procura eventos na mesma data e mesmo espaço
-        const eventosNoMesmoLocal = todosEventos.filter(ev => {
-          // Ignora o próprio evento se estiver editando
-          if (eventoEmEdicao && ev.id === eventoEmEdicao) return false;
-          return ev.data === formEvento.data && ev.espacoId === formEvento.espacoId;
-        });
-
         const novoInicio = formEvento.horaInicio;
         const novoFim = formEvento.horaFim;
 
-        for (const ev of eventosNoMesmoLocal) {
+        // Procura eventos na mesma data
+        const eventosNaMesmaData = todosEventos.filter(ev => {
+          if (eventoEmEdicao && ev.id === eventoEmEdicao) return false;
+          return ev.data === formEvento.data;
+        });
+
+        for (const ev of eventosNaMesmaData) {
           const evInicio = ev.horaInicio;
           const evFim = ev.horaFim;
 
-          // Regra de sobreposição de intervalos: Max(Inicio1, Inicio2) < Min(Fim1, Fim2)
-          if (novoInicio < evFim && novoFim > evInicio) {
-            const cong = congregacoes.find(c => c.id === ev.congregacaoId);
-            const espaco = ESPACOS_SALAO.find(e => e.id === ev.espacoId);
-            return {
-              eventoConflitante: ev,
-              nomeCongregacao: cong?.nome || 'Outra congregação',
-              espacoNome: espaco?.label || 'Salão',
-              horario: `${evInicio} às ${evFim}`,
-              isFixa: ev.isFixa
-            };
+          // Checa sobreposição no tempo
+          const temSobreposicaoHorario = novoInicio < evFim && novoFim > evInicio;
+
+          if (temSobreposicaoHorario) {
+            // Regra 1: Se o evento existente for Reunião Semanal (bloqueia todo o prédio),
+            // nenhum espaço (nem Salão Principal, nem Sala B) pode ser agendado!
+            // Regra 2: Se for outro evento manual, conflita se for no mesmo espaço.
+            const conflitaEspaco = ev.bloqueiaTodoPredio || ev.espacoId === formEvento.espacoId;
+
+            if (conflitaEspaco) {
+              const cong = congregacoes.find(c => c.id === ev.congregacaoId);
+              const espaco = ESPACOS_SALAO.find(e => e.id === ev.espacoId);
+              return {
+                eventoConflitante: ev,
+                nomeCongregacao: cong?.nome || 'Outra congregação',
+                espacoNome: ev.bloqueiaTodoPredio ? 'Todo o Salão do Reino (Salão Principal + Sala B)' : (espaco?.label || 'Salão'),
+                horario: `${evInicio} às ${evFim}`,
+                isFixa: ev.isFixa,
+                bloqueiaTodoPredio: ev.bloqueiaTodoPredio
+              };
+            }
           }
         }
 
@@ -430,7 +441,7 @@
       // Abrir Modal para EDITAR existente
       const abrirEditarEvento = (ev) => {
         if (ev.isFixa) {
-          alert("Esta é uma reunião fixa semanal. Para alterar o dia ou horário, use o botão 'Configurações' no topo da tela.");
+          alert("Esta é uma reunião semanal fixa. Para alterar o dia ou horário, utilize o botão 'Configurações' no topo da página.");
           return;
         }
         setEventoEmEdicao(ev.id);
@@ -455,7 +466,11 @@
         e.preventDefault();
 
         if (conflitoDetectado) {
-          alert(`Choque de Horário Detectado!\nJá existe o evento "${conflitoDetectado.eventoConflitante.titulo}" agendado das ${conflitoDetectado.horario} no ${conflitoDetectado.espacoNome}.\n\nPor favor, escolha outro horário ou outro espaço.`);
+          if (conflitoDetectado.bloqueiaTodoPredio) {
+            alert(`Choque de Reunião!\nDurante as reuniões semanais das congregações, todo o Salão do Reino é utilizado (inclusive a Sala B).\n\nConflito com: ${conflitoDetectado.eventoConflitante.titulo} (${conflitoDetectado.horario}).\nPor favor, agende em outro dia ou horário.`);
+          } else {
+            alert(`Choque de Horário Detectado!\nJá existe o evento "${conflitoDetectado.eventoConflitante.titulo}" agendado das ${conflitoDetectado.horario} no ${conflitoDetectado.espacoNome}.\n\nPor favor, escolha outro horário ou o outro ambiente.`);
+          }
           return;
         }
 
@@ -482,7 +497,7 @@
       // Excluir
       const handleExcluir = async (id, isFixa) => {
         if (isFixa) {
-          alert("Esta é uma reunião fixa semanal. Para alterar o dia ou horário, use o botão 'Configurações'.");
+          alert("Esta é uma reunião fixa semanal. Para alterar o dia ou horário, utilize o botão 'Configurações'.");
           return;
         }
         if (!confirm('Deseja excluir este agendamento?')) return;
@@ -635,7 +650,7 @@
               {statusConexao}
             </span>
             <span className="flex items-center gap-1 text-emerald-600 font-semibold">
-              <span>🛡️</span> Detecção de choques de horário ativa
+              <span>🛡️</span> As reuniões semanais bloqueiam todo o Salão (Principal + Sala B)
             </span>
           </div>
 
@@ -786,7 +801,7 @@
                                   <div className="flex justify-between items-center text-[10px] opacity-90 mb-1">
                                     <span className="font-bold">⏰ {ev.horaInicio} às {ev.horaFim}</span>
                                     <span className="bg-white/20 px-1.5 py-0.5 rounded font-semibold text-[9px]">
-                                      {espaco?.label === 'Salão Principal' ? 'Principal' : 'Sala B'}
+                                      {ev.bloqueiaTodoPredio ? 'Todo o Salão' : (espaco?.label === 'Salão Principal' ? 'Principal' : 'Sala B')}
                                     </span>
                                   </div>
                                   <p className="font-bold leading-tight">{ev.titulo}</p>
@@ -859,7 +874,7 @@
                                   {cong?.nome}
                                 </span>
                                 <span className="text-xs font-semibold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded">
-                                  {espaco?.label}
+                                  {ev.bloqueiaTodoPredio ? 'Todo o Prédio' : espaco?.label}
                                 </span>
                                 {ev.isFixa && (
                                   <span className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
@@ -914,12 +929,12 @@
                 </div>
 
                 <div className="space-y-2 text-xs text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-200 mb-4">
-                  <div><strong>Local:</strong> {ESPACOS_SALAO.find(e => e.id === eventoSelecionado.espacoId)?.label}</div>
+                  <div><strong>Local:</strong> {eventoSelecionado.bloqueiaTodoPredio ? 'Todo o Salão do Reino (Salão Principal + Sala B)' : ESPACOS_SALAO.find(e => e.id === eventoSelecionado.espacoId)?.label}</div>
                   <div><strong>Data:</strong> {eventoSelecionado.data.split('-').reverse().join('/')}</div>
                   <div><strong>Horário:</strong> {eventoSelecionado.horaInicio} às {eventoSelecionado.horaFim}</div>
                   {eventoSelecionado.isFixa ? (
                     <div className="text-blue-700 font-semibold bg-blue-50 p-2 rounded border border-blue-100">
-                      ℹ️ Reunião semanal fixa do rodízio das congregações.
+                      ℹ️ Reunião semanal fixa do rodízio. O Salão do Reino inteiro fica ocupado durante este período.
                     </div>
                   ) : (
                     <>
@@ -977,19 +992,23 @@
                       <span className="text-2xl leading-none">⚠️</span>
                       <div className="text-xs text-red-800">
                         <p className="font-bold text-sm text-red-900 mb-0.5">
-                          Atenção: Horário Indisponível!
+                          {conflitoDetectado.bloqueiaTodoPredio ? 'Conflito: Salão do Reino Inteiro em Uso!' : 'Atenção: Horário Indisponível!'}
                         </p>
                         <p>
-                          Já existe um evento marcado para este mesmo local e período:
+                          {conflitoDetectado.bloqueiaTodoPredio 
+                            ? 'Durante a reunião semanal, todo o Salão do Reino é utilizado (inclusive a Sala B):'
+                            : 'Já existe um evento marcado para este mesmo local e período:'}
                         </p>
                         <div className="mt-2 bg-white/80 p-2 rounded border border-red-200 font-semibold space-y-0.5">
                           <p>📌 <strong>Evento:</strong> {conflitoDetectado.eventoConflitante.titulo}</p>
-                          <p>🏛️ <strong>Local:</strong> {conflitoDetectado.espacoNome}</p>
+                          <p>🏛️ <strong>Espaço Ocupado:</strong> {conflitoDetectado.espacoNome}</p>
                           <p>⏰ <strong>Horário em choque:</strong> {conflitoDetectado.horario}</p>
                           <p>👥 <strong>Congregação:</strong> {conflitoDetectado.nomeCongregacao}</p>
                         </div>
                         <p className="mt-1.5 text-[11px] text-red-700 italic">
-                          Escolha outro horário ou alterne para a {formEvento.espacoId === 'salao_principal' ? 'Sala B' : 'Salão Principal'}.
+                          {conflitoDetectado.bloqueiaTodoPredio 
+                            ? 'Não é permitido agendar nenhum ambiente durante as reuniões semanais.'
+                            : `Escolha outro horário ou alterne para a ${formEvento.espacoId === 'salao_principal' ? 'Sala B' : 'Salão Principal'}.`}
                         </p>
                       </div>
                     </div>
