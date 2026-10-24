@@ -44,7 +44,7 @@
 
     signInAnonymously(window.auth)
       .then(() => console.log("Firebase Auth: Conectado"))
-      .catch((err) => console.warn("Firebase Auth aviso:", err.message));
+      .catch((err) => console.warn("Firebase Auth:", err.message));
   </script>
 
   <!-- Aplicação Principal -->
@@ -102,10 +102,8 @@
       }
     };
 
-    // Função utilitária para normalizar dados antigos ou mal formatados do banco
     function normalizarEscala(dadosDoBanco) {
       if (!dadosDoBanco || typeof dadosDoBanco !== 'object') return CONFIG_RODIZIO_DEFAULT;
-      
       const resultado = { ...CONFIG_RODIZIO_DEFAULT, ...dadosDoBanco };
 
       Object.keys(resultado).forEach(ano => {
@@ -121,8 +119,6 @@
             anoObj[congId] = padrao;
             return;
           }
-
-          // Se estiver salvo no formato legado de string direta
           if (!anoObj[congId].meioSemana || typeof anoObj[congId].meioSemana !== 'object' || typeof anoObj[congId].meioSemana.diaSemana === 'undefined') {
             anoObj[congId].meioSemana = padrao.meioSemana;
           }
@@ -139,7 +135,7 @@
       const [reservasManuais, setReservasManuais] = useState([]);
       const [congAtiva, setCongAtiva] = useState('todas');
       const [filtroEspaco, setFiltroEspaco] = useState('todos');
-      const [viewMode, setViewMode] = useState('mes');
+      const [viewMode, setViewMode] = useState('mes'); // 'mes', 'semana', 'dia'
       const [currentDate, setCurrentDate] = useState(new Date());
       const [congregacoes, setCongregacoes] = useState(CONGREGACOES_DEFAULT);
       const [rotacoes, setRotacoes] = useState(CONFIG_RODIZIO_DEFAULT);
@@ -163,7 +159,7 @@
         observacoes: ''
       });
 
-      // Firebase Sync Seguro
+      // Firebase Sync
       useEffect(() => {
         let unsubReservas = null;
         let unsubConfig = null;
@@ -177,7 +173,6 @@
               const dados = [];
               snapshot.forEach((d) => {
                 const item = d.data();
-                // Ignora se for lixo salvo anteriormente
                 if (item && item.data && item.titulo) {
                   dados.push({ id: d.id, ...item });
                 }
@@ -210,69 +205,79 @@
         };
       }, []);
 
-      // Gerador automático das reuniões fixas semanais
-      const reunioesFixasDoMes = useMemo(() => {
+      // Gerador automático das reuniões fixas semanais para o ano visualizado
+      const reunioesFixasDoAno = useMemo(() => {
         const ano = currentDate.getFullYear();
-        const mes = currentDate.getMonth();
         const escalaDoAno = rotacoes[String(ano)] || rotacoes["2026"] || CONFIG_RODIZIO_DEFAULT["2026"];
-        const totalDias = new Date(ano, mes + 1, 0).getDate();
         const lista = [];
 
-        for (let dia = 1; dia <= totalDias; dia++) {
-          const dataObj = new Date(ano, mes, dia);
-          const diaSemana = dataObj.getDay();
-          const dataStr = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+        // Gera para o mês atual, mês anterior e mês posterior para navegação fluida
+        const mesAtual = currentDate.getMonth();
+        const mesesParaGerar = [mesAtual - 1, mesAtual, mesAtual + 1];
 
-          congregacoes.forEach(cong => {
-            const configCong = escalaDoAno?.[cong.id];
-            if (!configCong) return;
+        mesesParaGerar.forEach(m => {
+          const dataBase = new Date(ano, m, 1);
+          const anoRef = dataBase.getFullYear();
+          const mesRef = dataBase.getMonth();
+          const totalDias = new Date(anoRef, mesRef + 1, 0).getDate();
 
-            // Meio de Semana
-            if (configCong.meioSemana && Number(configCong.meioSemana.diaSemana) === diaSemana) {
-              lista.push({
-                id: `fixa_meio_${cong.id}_${dataStr}`,
-                titulo: `Reunião Vida e Ministério (${cong.nome})`,
-                congregacaoId: cong.id,
-                espacoId: 'salao_principal',
-                tipoEvento: 'reuniao_meio_semana',
-                data: dataStr,
-                horaInicio: configCong.meioSemana.horaInicio || "19:30",
-                horaFim: configCong.meioSemana.horaFim || "21:15",
-                responsavel: 'Corpo de Anciãos',
-                telefone: '',
-                observacoes: 'Horário semanal oficial',
-                isFixa: true
-              });
-            }
+          for (let dia = 1; dia <= totalDias; dia++) {
+            const dataObj = new Date(anoRef, mesRef, dia);
+            const diaSemana = dataObj.getDay();
+            const dataStr = `${anoRef}-${String(mesRef + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
 
-            // Fim de Semana
-            if (configCong.fimSemana && Number(configCong.fimSemana.diaSemana) === diaSemana) {
-              lista.push({
-                id: `fixa_fim_${cong.id}_${dataStr}`,
-                titulo: `Reunião Pública e Sentinela (${cong.nome})`,
-                congregacaoId: cong.id,
-                espacoId: 'salao_principal',
-                tipoEvento: 'reuniao_fim_semana',
-                data: dataStr,
-                horaInicio: configCong.fimSemana.horaInicio || "19:00",
-                horaFim: configCong.fimSemana.horaFim || "20:45",
-                responsavel: 'Corpo de Anciãos',
-                telefone: '',
-                observacoes: 'Horário semanal oficial',
-                isFixa: true
-              });
-            }
-          });
-        }
+            congregacoes.forEach(cong => {
+              const configCong = escalaDoAno?.[cong.id];
+              if (!configCong) return;
+
+              // Meio de semana
+              if (configCong.meioSemana && Number(configCong.meioSemana.diaSemana) === diaSemana) {
+                lista.push({
+                  id: `fixa_meio_${cong.id}_${dataStr}`,
+                  titulo: `Reunião Vida e Ministério (${cong.nome})`,
+                  congregacaoId: cong.id,
+                  espacoId: 'salao_principal',
+                  tipoEvento: 'reuniao_meio_semana',
+                  data: dataStr,
+                  horaInicio: configCong.meioSemana.horaInicio || "19:30",
+                  horaFim: configCong.meioSemana.horaFim || "21:15",
+                  responsavel: 'Corpo de Anciãos',
+                  telefone: '',
+                  observacoes: 'Horário semanal fixo',
+                  isFixa: true
+                });
+              }
+
+              // Fim de semana
+              if (configCong.fimSemana && Number(configCong.fimSemana.diaSemana) === diaSemana) {
+                lista.push({
+                  id: `fixa_fim_${cong.id}_${dataStr}`,
+                  titulo: `Reunião Pública e Sentinela (${cong.nome})`,
+                  congregacaoId: cong.id,
+                  espacoId: 'salao_principal',
+                  tipoEvento: 'reuniao_fim_semana',
+                  data: dataStr,
+                  horaInicio: configCong.fimSemana.horaInicio || "19:00",
+                  horaFim: configCong.fimSemana.horaFim || "20:45",
+                  responsavel: 'Corpo de Anciãos',
+                  telefone: '',
+                  observacoes: 'Horário semanal fixo',
+                  isFixa: true
+                });
+              }
+            });
+          }
+        });
+
         return lista;
       }, [currentDate, rotacoes, congregacoes]);
 
-      // Unir reuniões automáticas com reservas manuais
+      // Unir reuniões fixas e reservas manuais
       const todosEventos = useMemo(() => {
-        const combinados = [...reunioesFixasDoMes, ...reservasManuais];
+        const combinados = [...reunioesFixasDoAno, ...reservasManuais];
         combinados.sort((a, b) => ((a.data || '') + (a.horaInicio || '')).localeCompare((b.data || '') + (b.horaInicio || '')));
         return combinados;
-      }, [reunioesFixasDoMes, reservasManuais]);
+      }, [reunioesFixasDoAno, reservasManuais]);
 
       // Filtros
       const eventosFiltrados = useMemo(() => {
@@ -283,7 +288,7 @@
         });
       }, [todosEventos, congAtiva, filtroEspaco]);
 
-      // Matriz de dias para calendário
+      // 1. DIAS PARA A VISÃO MÊS
       const diasDoMes = useMemo(() => {
         const ano = currentDate.getFullYear();
         const mes = currentDate.getMonth();
@@ -303,13 +308,82 @@
         return dias;
       }, [currentDate, eventosFiltrados]);
 
-      // Salvar Agendamento Manual
+      // 2. DIAS PARA A VISÃO SEMANA (Domingo a Sábado)
+      const diasDaSemana = useMemo(() => {
+        const d = new Date(currentDate);
+        const diaSemanaAtual = d.getDay();
+        const inicioSemana = new Date(d);
+        inicioSemana.setDate(d.getDate() - diaSemanaAtual);
+
+        const dias = [];
+        for (let i = 0; i < 7; i++) {
+          const dataDia = new Date(inicioSemana);
+          dataDia.setDate(inicioSemana.getDate() + i);
+          const ano = dataDia.getFullYear();
+          const mes = dataDia.getMonth() + 1;
+          const diaNum = dataDia.getDate();
+          const dataStr = `${ano}-${String(mes).padStart(2, '0')}-${String(diaNum).padStart(2, '0')}`;
+
+          dias.push({
+            nomeDia: DIAS_OPCOES[i].nome.split('-')[0],
+            diaNumero: diaNum,
+            dataStr,
+            eventos: eventosFiltrados.filter(e => e.data === dataStr)
+          });
+        }
+        return dias;
+      }, [currentDate, eventosFiltrados]);
+
+      // 3. EVENTOS PARA A VISÃO DIA
+      const eventosDoDiaAtual = useMemo(() => {
+        const ano = currentDate.getFullYear();
+        const mes = currentDate.getMonth() + 1;
+        const diaNum = currentDate.getDate();
+        const dataStr = `${ano}-${String(mes).padStart(2, '0')}-${String(diaNum).padStart(2, '0')}`;
+        return {
+          dataStr,
+          eventos: eventosFiltrados.filter(e => e.data === dataStr)
+        };
+      }, [currentDate, eventosFiltrados]);
+
+      // Navegação por período
+      const handlePrev = () => {
+        const d = new Date(currentDate);
+        if (viewMode === 'mes') d.setMonth(d.getMonth() - 1);
+        else if (viewMode === 'semana') d.setDate(d.getDate() - 7);
+        else d.setDate(d.getDate() - 1);
+        setCurrentDate(d);
+      };
+
+      const handleNext = () => {
+        const d = new Date(currentDate);
+        if (viewMode === 'mes') d.setMonth(d.getMonth() + 1);
+        else if (viewMode === 'semana') d.setDate(d.getDate() + 7);
+        else d.setDate(d.getDate() + 1);
+        setCurrentDate(d);
+      };
+
+      const handleHoje = () => setCurrentDate(new Date());
+
+      // Título do cabeçalho da data
+      const tituloPeriodo = useMemo(() => {
+        if (viewMode === 'mes') {
+          return currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+        }
+        if (viewMode === 'semana') {
+          const primeiro = diasDaSemana[0]?.diaNumero;
+          const ultimo = diasDaSemana[6]?.diaNumero;
+          const mes = currentDate.toLocaleDateString('pt-BR', { month: 'short' });
+          const ano = currentDate.getFullYear();
+          return `Semana: ${primeiro} a ${ultimo} de ${mes}, ${ano}`;
+        }
+        return currentDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      }, [viewMode, currentDate, diasDaSemana]);
+
+      // Salvar Reserva Manual
       const handleSalvarReserva = async (e) => {
         e.preventDefault();
-        if (!window.db || !window.firestoreOps) {
-          alert("Aguardando conexão com o banco...");
-          return;
-        }
+        if (!window.db || !window.firestoreOps) return;
         const { collection, doc, setDoc } = window.firestoreOps;
         const id = 'res_' + Date.now();
         await setDoc(doc(collection(window.db, 'reservas_salao'), id), novoEvento);
@@ -328,10 +402,10 @@
         });
       };
 
-      // Excluir Manual
+      // Excluir
       const handleExcluir = async (id, isFixa) => {
         if (isFixa) {
-          alert("Esta é uma reunião fixa semanal. Para alterar o dia ou horário, abra 'Configurações' no topo da tela.");
+          alert("Esta é uma reunião fixa semanal. Para alterar o dia ou horário, use o botão 'Configurações'.");
           return;
         }
         if (!confirm('Deseja excluir este agendamento?')) return;
@@ -341,7 +415,7 @@
         setEventoSelecionado(null);
       };
 
-      // Salvar Configuração de Rodízio
+      // Salvar Configurações
       const handleSalvarConfig = async () => {
         if (!window.db || !window.firestoreOps) return;
         const { doc, setDoc } = window.firestoreOps;
@@ -352,9 +426,9 @@
         setModalConfigAberto(false);
       };
 
-      // Limpar conflitos e restaurar escala padrão
+      // Restaurar Padrão
       const handleRestaurarPadrao = async () => {
-        if (!confirm('Deseja resetar as configurações de rodízio para o padrão oficial das congregações Espanhola, Itinga e Profipo?')) return;
+        if (!confirm('Deseja restaurar as configurações de rodízio para o padrão oficial das 3 congregações?')) return;
         if (!window.db || !window.firestoreOps) return;
         const { doc, setDoc } = window.firestoreOps;
         await setDoc(doc(window.db, 'configuracoes', 'geral'), {
@@ -366,25 +440,9 @@
         alert('Configurações restauradas com sucesso!');
       };
 
-      const handlePrev = () => {
-        const d = new Date(currentDate);
-        d.setMonth(d.getMonth() - 1);
-        setCurrentDate(d);
-      };
-
-      const handleNext = () => {
-        const d = new Date(currentDate);
-        d.setMonth(d.getMonth() + 1);
-        setCurrentDate(d);
-      };
-
-      const handleHoje = () => setCurrentDate(new Date());
-
-      const nomeMesAno = currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-
       return (
         <div className="min-h-screen pb-12">
-          {/* HEADER */}
+          {/* HEADER PRINCIPAL */}
           <header className="bg-slate-900 text-white sticky top-0 z-20 shadow-md">
             <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -413,9 +471,10 @@
               </div>
             </div>
 
-            {/* FILTROS */}
+            {/* BARRA DE FILTROS E MODO DE VISUALIZAÇÃO */}
             <div className="bg-slate-800 border-t border-slate-700 px-4 py-2.5">
               <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
+                {/* Congregações */}
                 <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
                   <button
                     onClick={() => setCongAtiva('todas')}
@@ -435,6 +494,7 @@
                   ))}
                 </div>
 
+                {/* Filtro Espaço & SELETOR: MÊS / SEMANA / DIA */}
                 <div className="flex items-center gap-2">
                   <select
                     value={filtroEspaco}
@@ -446,18 +506,25 @@
                     <option value="sala_b">Sala B</option>
                   </select>
 
+                  {/* ABAS: MÊS / SEMANA / DIA */}
                   <div className="bg-slate-900 p-0.5 rounded-lg flex border border-slate-700 text-xs">
                     <button
                       onClick={() => setViewMode('mes')}
-                      className={`px-2.5 py-1 rounded-md transition ${viewMode === 'mes' ? 'bg-blue-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
+                      className={`px-3 py-1 rounded-md font-semibold transition ${viewMode === 'mes' ? 'bg-blue-600 text-white shadow' : 'text-slate-300 hover:text-white'}`}
                     >
                       Mês
                     </button>
                     <button
-                      onClick={() => setViewMode('lista')}
-                      className={`px-2.5 py-1 rounded-md transition ${viewMode === 'lista' ? 'bg-blue-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
+                      onClick={() => setViewMode('semana')}
+                      className={`px-3 py-1 rounded-md font-semibold transition ${viewMode === 'semana' ? 'bg-blue-600 text-white shadow' : 'text-slate-300 hover:text-white'}`}
                     >
-                      Lista
+                      Semana
+                    </button>
+                    <button
+                      onClick={() => setViewMode('dia')}
+                      className={`px-3 py-1 rounded-md font-semibold transition ${viewMode === 'dia' ? 'bg-blue-600 text-white shadow' : 'text-slate-300 hover:text-white'}`}
+                    >
+                      Dia
                     </button>
                   </div>
                 </div>
@@ -471,16 +538,17 @@
               <span className={`w-2 h-2 rounded-full ${statusConexao === 'Tempo real ativo' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
               {statusConexao}
             </span>
-            <span>{eventosFiltrados.length} evento(s) no total</span>
+            <span>Visualização por {viewMode.toUpperCase()}</span>
           </div>
 
           <main className="max-w-6xl mx-auto px-4 mt-3">
-            {/* BARRA DE NAVEGAÇÃO */}
+            {/* NAVEGAÇÃO DE PERÍODO (MÊS / SEMANA / DIA) */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <button
                   onClick={handlePrev}
                   className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm"
+                  title="Anterior"
                 >
                   ◀
                 </button>
@@ -493,21 +561,25 @@
                 <button
                   onClick={handleNext}
                   className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm"
+                  title="Próximo"
                 >
                   ▶
                 </button>
               </div>
 
-              <h2 className="font-bold text-slate-800 text-base md:text-lg capitalize">
-                {nomeMesAno}
+              <h2 className="font-bold text-slate-800 text-base md:text-lg capitalize text-center px-2">
+                {tituloPeriodo}
               </h2>
 
-              <span className="text-xs text-slate-500 font-medium">
-                {eventosFiltrados.length} evento(s) neste mês
-              </span>
+              <button
+                onClick={() => setModalAberto(true)}
+                className="hidden sm:inline-flex text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+              >
+                + Agendar evento
+              </button>
             </div>
 
-            {/* CALENDÁRIO MENSAL */}
+            {/* ===================== VISÃO 1: MÊS ===================== */}
             {viewMode === 'mes' && (
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="grid grid-cols-7 bg-slate-100 border-b border-slate-200 text-center font-bold text-xs text-slate-600 py-2.5">
@@ -569,65 +641,166 @@
               </div>
             )}
 
-            {/* LISTA */}
-            {viewMode === 'lista' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                {eventosFiltrados.map(ev => {
-                  const cong = congregacoes.find(c => c.id === ev.congregacaoId);
-                  const espaco = ESPACOS_SALAO.find(e => e.id === ev.espacoId);
-                  return (
-                    <div key={ev.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col justify-between hover:shadow-md transition">
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span
-                            className="text-xs font-bold px-2.5 py-0.5 rounded-full text-white"
-                            style={{ backgroundColor: cong?.hex || '#475569' }}
-                          >
-                            {cong?.nome}
-                          </span>
-                          <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                            {espaco?.label}
-                          </span>
-                        </div>
-                        <h4 className="font-bold text-slate-800 text-base leading-snug">{ev.titulo}</h4>
-                        <p className="text-xs text-blue-600 font-semibold mt-0.5">
-                          {TIPOS_EVENTO.find(t => t.id === ev.tipoEvento)?.label || ev.tipoEvento}
-                        </p>
+            {/* ===================== VISÃO 2: SEMANA ===================== */}
+            {viewMode === 'semana' && (
+              <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
+                {diasDaSemana.map((dia, idx) => {
+                  const ehHoje = new Date().toISOString().split('T')[0] === dia.dataStr;
 
-                        <div className="mt-3 space-y-1.5 text-xs text-slate-600">
-                          <div className="flex items-center gap-1.5">
-                            <span>📆</span>
-                            <span className="font-semibold text-slate-800">{ev.data.split('-').reverse().join('/')}</span>
-                            <span>⏰</span>
-                            <span>{ev.horaInicio} às {ev.horaFim}</span>
+                  return (
+                    <div
+                      key={dia.dataStr}
+                      className={`bg-white rounded-2xl border shadow-sm p-3 flex flex-col justify-between min-h-[340px] ${ehHoje ? 'border-blue-400 ring-2 ring-blue-100' : 'border-slate-200'}`}
+                    >
+                      <div>
+                        {/* Topo do dia da semana */}
+                        <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+                          <div>
+                            <span className={`text-xs font-bold ${idx === 0 ? 'text-red-600' : idx === 6 ? 'text-blue-600' : 'text-slate-500'}`}>
+                              {dia.nomeDia}
+                            </span>
+                            <div className="text-xl font-bold text-slate-800 leading-none mt-0.5">
+                              {dia.diaNumero}
+                            </div>
                           </div>
-                          {ev.isFixa && (
-                            <span className="inline-block bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded">
-                              Reunião Fixa Semanal
+                          {ehHoje && (
+                            <span className="text-[10px] font-bold bg-blue-600 text-white px-2 py-0.5 rounded-full">
+                              Hoje
                             </span>
                           )}
-                          {ev.responsavel && !ev.isFixa && (
-                            <div className="flex items-center gap-1.5">
-                              <span>👤</span>
-                              <span>Resp: <strong>{ev.responsavel}</strong> {ev.telefone && `(${ev.telefone})`}</span>
-                            </div>
+                        </div>
+
+                        {/* Lista de eventos no dia da semana */}
+                        <div className="space-y-2 mt-2">
+                          {dia.eventos.length === 0 ? (
+                            <p className="text-[11px] text-slate-400 italic py-4 text-center">Nenhum evento</p>
+                          ) : (
+                            dia.eventos.map(ev => {
+                              const cong = congregacoes.find(c => c.id === ev.congregacaoId);
+                              const espaco = ESPACOS_SALAO.find(e => e.id === ev.espacoId);
+
+                              return (
+                                <div
+                                  key={ev.id}
+                                  onClick={() => setEventoSelecionado(ev)}
+                                  className="p-2 rounded-xl text-white text-xs cursor-pointer shadow-sm hover:opacity-95 transition"
+                                  style={{ backgroundColor: cong?.hex || '#2563eb' }}
+                                >
+                                  <div className="flex justify-between items-center text-[10px] opacity-90 mb-1">
+                                    <span className="font-bold">⏰ {ev.horaInicio} às {ev.horaFim}</span>
+                                    <span className="bg-white/20 px-1.5 py-0.5 rounded font-semibold text-[9px]">
+                                      {espaco?.label === 'Salão Principal' ? 'Principal' : 'Sala B'}
+                                    </span>
+                                  </div>
+                                  <p className="font-bold leading-tight">{ev.titulo}</p>
+                                </div>
+                              );
+                            })
                           )}
                         </div>
                       </div>
 
-                      {!ev.isFixa && (
-                        <div className="mt-4 pt-3 border-t border-slate-100 flex justify-end">
-                          <button
-                            onClick={() => handleExcluir(ev.id, false)}
-                            className="text-xs text-red-600 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50"
-                          >
-                            Excluir
-                          </button>
-                        </div>
-                      )}
+                      <button
+                        onClick={() => {
+                          setNovoEvento(prev => ({ ...prev, data: dia.dataStr }));
+                          setModalAberto(true);
+                        }}
+                        className="mt-3 text-center text-xs font-bold text-blue-600 hover:text-blue-700 py-1.5 border border-dashed border-blue-200 rounded-lg hover:bg-blue-50 transition"
+                      >
+                        + Reservar
+                      </button>
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* ===================== VISÃO 3: DIA ===================== */}
+            {viewMode === 'dia' && (
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 md:p-6">
+                <div className="flex flex-wrap items-center justify-between pb-4 mb-4 border-b border-slate-100 gap-2">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-800">Programação do Dia</h3>
+                    <p className="text-xs text-slate-500">
+                      Uso dos ambientes: Salão Principal e Sala B
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setNovoEvento(prev => ({ ...prev, data: eventosDoDiaAtual.dataStr }));
+                      setModalAberto(true);
+                    }}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow transition"
+                  >
+                    + Agendar para esta data
+                  </button>
+                </div>
+
+                {eventosDoDiaAtual.eventos.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="text-4xl mb-2">🏖️</div>
+                    <h4 className="font-bold text-slate-700">Nenhum evento agendado para este dia</h4>
+                    <p className="text-xs text-slate-400 mt-1">O Salão Principal e a Sala B estão livres.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {eventosDoDiaAtual.eventos.map(ev => {
+                      const cong = congregacoes.find(c => c.id === ev.congregacaoId);
+                      const espaco = ESPACOS_SALAO.find(e => e.id === ev.espacoId);
+
+                      return (
+                        <div
+                          key={ev.id}
+                          onClick={() => setEventoSelecionado(ev)}
+                          className="p-4 rounded-xl border border-slate-200 hover:shadow-md transition cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div
+                              className="w-3 self-stretch rounded-full"
+                              style={{ backgroundColor: cong?.hex || '#2563eb' }}
+                            ></div>
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span
+                                  className="text-xs font-bold px-2 py-0.5 rounded text-white"
+                                  style={{ backgroundColor: cong?.hex || '#2563eb' }}
+                                >
+                                  {cong?.nome}
+                                </span>
+                                <span className="text-xs font-semibold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded">
+                                  {espaco?.label}
+                                </span>
+                                {ev.isFixa && (
+                                  <span className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                                    Reunião Fixa
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="font-bold text-slate-800 text-base">{ev.titulo}</h4>
+                              <p className="text-xs text-slate-500 mt-0.5">
+                                {TIPOS_EVENTO.find(t => t.id === ev.tipoEvento)?.label || ev.tipoEvento}
+                              </p>
+                              {ev.responsavel && !ev.isFixa && (
+                                <p className="text-xs text-slate-600 mt-1">
+                                  Resp: <strong>{ev.responsavel}</strong> {ev.telefone && `(${ev.telefone})`}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="text-right">
+                            <div className="text-sm font-bold text-slate-800">
+                              ⏰ {ev.horaInicio} às {ev.horaFim}
+                            </div>
+                            <span className="text-xs text-blue-600 font-semibold underline mt-1 inline-block">
+                              Ver Detalhes
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </main>
@@ -943,11 +1116,11 @@
                     })}
                   </div>
 
-                  {/* Botão de Limpeza e Restauração Segura */}
+                  {/* Restauração rápida se necessário */}
                   <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800 flex justify-between items-center">
                     <div>
-                      <p className="font-bold">Resolver conflitos de dados</p>
-                      <p className="text-[11px] text-amber-700">Se algum horário salvo anteriormente estiver desconfigurado, restaure o padrão oficial.</p>
+                      <p className="font-bold">Restaurar escala padrão</p>
+                      <p className="text-[11px] text-amber-700">Aplica a escala 2026 oficial das 3 congregações.</p>
                     </div>
                     <button
                       type="button"
