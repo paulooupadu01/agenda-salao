@@ -162,7 +162,7 @@
 
       const [formEvento, setFormEvento] = useState(EVENTO_INICIAL);
 
-      // Firebase Sync
+      // Sincronização em tempo real com o Firebase
       useEffect(() => {
         let unsubReservas = null;
         let unsubConfig = null;
@@ -208,7 +208,7 @@
         };
       }, []);
 
-      // Reuniões fixas semanais (Bloqueiam todo o Salão do Reino)
+      // Reuniões semanais fixas (Ocupam integralmente o Salão do Reino)
       const reunioesFixasDoAno = useMemo(() => {
         const ano = currentDate.getFullYear();
         const escalaDoAno = rotacoes[String(ano)] || rotacoes["2026"] || CONFIG_RODIZIO_DEFAULT["2026"];
@@ -238,7 +238,7 @@
                   titulo: `Reunião Vida e Ministério (${cong.nome})`,
                   congregacaoId: cong.id,
                   espacoId: 'salao_principal',
-                  bloqueiaTodoPredio: true, // Bloqueia Salão Principal e Sala B
+                  bloqueiaTodoPredio: true,
                   tipoEvento: 'reuniao_meio_semana',
                   data: dataStr,
                   horaInicio: configCong.meioSemana.horaInicio || "19:30",
@@ -256,7 +256,7 @@
                   titulo: `Reunião Pública e Sentinela (${cong.nome})`,
                   congregacaoId: cong.id,
                   espacoId: 'salao_principal',
-                  bloqueiaTodoPredio: true, // Bloqueia Salão Principal e Sala B
+                  bloqueiaTodoPredio: true,
                   tipoEvento: 'reuniao_fim_semana',
                   data: dataStr,
                   horaInicio: configCong.fimSemana.horaInicio || "19:00",
@@ -274,16 +274,14 @@
         return lista;
       }, [currentDate, rotacoes, congregacoes]);
 
-      // Unir reuniões fixas e reservas manuais
+      // Unir reuniões fixas e agendamentos manuais
       const todosEventos = useMemo(() => {
         const combinados = [...reunioesFixasDoAno, ...reservasManuais];
         combinados.sort((a, b) => ((a.data || '') + (a.horaInicio || '')).localeCompare((b.data || '') + (b.horaInicio || '')));
         return combinados;
       }, [reunioesFixasDoAno, reservasManuais]);
 
-      // =========================================================================
-      // DETECTOR DE CONFLITOS EM TEMPO REAL COM BLOQUEIO INTEGRAL DO PRÉDIO
-      // =========================================================================
+      // Deteção inteligente de choque de horários
       const conflitoDetectado = useMemo(() => {
         if (!modalAberto) return null;
         if (!formEvento.data || !formEvento.horaInicio || !formEvento.horaFim || !formEvento.espacoId) return null;
@@ -291,7 +289,6 @@
         const novoInicio = formEvento.horaInicio;
         const novoFim = formEvento.horaFim;
 
-        // Procura eventos na mesma data
         const eventosNaMesmaData = todosEventos.filter(ev => {
           if (eventoEmEdicao && ev.id === eventoEmEdicao) return false;
           return ev.data === formEvento.data;
@@ -301,13 +298,9 @@
           const evInicio = ev.horaInicio;
           const evFim = ev.horaFim;
 
-          // Checa sobreposição no tempo
           const temSobreposicaoHorario = novoInicio < evFim && novoFim > evInicio;
 
           if (temSobreposicaoHorario) {
-            // Regra 1: Se o evento existente for Reunião Semanal (bloqueia todo o prédio),
-            // nenhum espaço (nem Salão Principal, nem Sala B) pode ser agendado!
-            // Regra 2: Se for outro evento manual, conflita se for no mesmo espaço.
             const conflitaEspaco = ev.bloqueiaTodoPredio || ev.espacoId === formEvento.espacoId;
 
             if (conflitaEspaco) {
@@ -428,7 +421,7 @@
         return currentDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
       }, [viewMode, currentDate, diasDaSemana]);
 
-      // Abrir Modal para CRIAR novo
+      // Abrir Modal para Criação
       const abrirNovoAgendamento = (dataPredefinida = null) => {
         setEventoEmEdicao(null);
         setFormEvento({
@@ -438,7 +431,7 @@
         setModalAberto(true);
       };
 
-      // Abrir Modal para EDITAR existente
+      // Abrir Modal para Edição
       const abrirEditarEvento = (ev) => {
         if (ev.isFixa) {
           alert("Esta é uma reunião semanal fixa. Para alterar o dia ou horário, utilize o botão 'Configurações' no topo da página.");
@@ -461,26 +454,32 @@
         setModalAberto(true);
       };
 
-      // Salvar com bloqueio anti-conflito
+      // Guardar Agendamento (Valida choque de horários e responsável obrigatório)
       const handleSalvarReserva = async (e) => {
         e.preventDefault();
 
+        // Verificação explícita do responsável
+        if (!formEvento.responsavel.trim()) {
+          alert("Por favor, preencha o nome do responsável.");
+          return;
+        }
+
         if (conflitoDetectado) {
           if (conflitoDetectado.bloqueiaTodoPredio) {
-            alert(`Choque de Reunião!\nDurante as reuniões semanais das congregações, todo o Salão do Reino é utilizado (inclusive a Sala B).\n\nConflito com: ${conflitoDetectado.eventoConflitante.titulo} (${conflitoDetectado.horario}).\nPor favor, agende em outro dia ou horário.`);
+            alert(`Choque de Reunião!\nDurante as reuniões semanais das congregações, todo o Salão do Reino é utilizado (inclusive a Sala B).\n\nConflito com: ${conflitoDetectado.eventoConflitante.titulo} (${conflitoDetectado.horario}).\nPor favor, escolha outro dia ou horário.`);
           } else {
-            alert(`Choque de Horário Detectado!\nJá existe o evento "${conflitoDetectado.eventoConflitante.titulo}" agendado das ${conflitoDetectado.horario} no ${conflitoDetectado.espacoNome}.\n\nPor favor, escolha outro horário ou o outro ambiente.`);
+            alert(`Choque de Horário Detectado!\nJá existe o evento "${conflitoDetectado.eventoConflitante.titulo}" agendado das ${conflitoDetectado.horario} no ${conflitoDetectado.espacoNome}.\n\nPor favor, escolha outro horário ou outro ambiente.`);
           }
           return;
         }
 
         if (formEvento.horaFim <= formEvento.horaInicio) {
-          alert("O horário de término precisa ser posterior ao horário de início.");
+          alert("O horário de término tem de ser posterior ao horário de início.");
           return;
         }
 
         if (!window.db || !window.firestoreOps) {
-          alert("Aguardando conexão com o banco...");
+          alert("A aguardar ligação à base de dados...");
           return;
         }
 
@@ -494,20 +493,20 @@
         setFormEvento(EVENTO_INICIAL);
       };
 
-      // Excluir
+      // Eliminar
       const handleExcluir = async (id, isFixa) => {
         if (isFixa) {
           alert("Esta é uma reunião fixa semanal. Para alterar o dia ou horário, utilize o botão 'Configurações'.");
           return;
         }
-        if (!confirm('Deseja excluir este agendamento?')) return;
+        if (!confirm('Deseja eliminar este agendamento?')) return;
         if (!window.db || !window.firestoreOps) return;
         const { doc, deleteDoc } = window.firestoreOps;
         await deleteDoc(doc(window.db, 'reservas_salao', id));
         setEventoSelecionado(null);
       };
 
-      // Salvar Configurações
+      // Guardar Configurações
       const handleSalvarConfig = async () => {
         if (!window.db || !window.firestoreOps) return;
         const { doc, setDoc } = window.firestoreOps;
@@ -650,7 +649,7 @@
               {statusConexao}
             </span>
             <span className="flex items-center gap-1 text-emerald-600 font-semibold">
-              <span>🛡️</span> As reuniões semanais bloqueiam todo o Salão (Principal + Sala B)
+              <span>🛡️</span> As reuniões semanais ocupam todo o Salão (Principal + Sala B)
             </span>
           </div>
 
@@ -886,7 +885,7 @@
                               <p className="text-xs text-slate-500 mt-0.5">
                                 {TIPOS_EVENTO.find(t => t.id === ev.tipoEvento)?.label || ev.tipoEvento}
                               </p>
-                              {ev.responsavel && !ev.isFixa && (
+                              {ev.responsavel && (
                                 <p className="text-xs text-slate-600 mt-1">
                                   Resp: <strong>{ev.responsavel}</strong> {ev.telefone && `(${ev.telefone})`}
                                 </p>
@@ -973,7 +972,7 @@
           )}
 
           {/* ============================================================== */}
-          {/* MODAL: NOVO AGENDAMENTO OU EDIÇÃO COM ALERTA DE CHOQUE ATIVO */}
+          {/* MODAL: NOVO AGENDAMENTO OU EDIÇÃO COM RESPONSÁVEL OBRIGATÓRIO  */}
           {/* ============================================================== */}
           {modalAberto && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -986,7 +985,7 @@
                 </div>
 
                 <form onSubmit={handleSalvarReserva} className="space-y-4">
-                  {/* CARD DE ALERTA DE CONFLITO / CHOQUE DE HORÁRIO */}
+                  {/* CARD DE ALERTA DE CONFLITO */}
                   {conflitoDetectado && (
                     <div className="p-3.5 bg-red-50 border-2 border-red-400 rounded-xl flex items-start gap-3 animate-pulse">
                       <span className="text-2xl leading-none">⚠️</span>
@@ -1087,15 +1086,19 @@
                     </div>
                   </div>
 
+                  {/* RESPONSÁVEL OBRIGATÓRIO */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">Responsável</label>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Responsável *
+                      </label>
                       <input
+                        required
                         type="text"
-                        placeholder="Nome do irmão"
+                        placeholder="Nome do irmão responsável"
                         value={formEvento.responsavel}
                         onChange={e => setFormEvento({ ...formEvento, responsavel: e.target.value })}
-                        className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:outline-none"
+                        className="w-full text-sm border border-slate-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                       />
                     </div>
                     <div>
