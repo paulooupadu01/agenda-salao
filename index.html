@@ -157,7 +157,7 @@
       const [modalAberto, setModalAberto] = useState(false);
       const [modalConfigAberto, setModalConfigAberto] = useState(false);
       const [eventoSelecionado, setEventoSelecionado] = useState(null);
-      const [eventoEmEdicao, setEventoEmEdicao] = useState(null); // id do evento sendo editado ou null
+      const [eventoEmEdicao, setEventoEmEdicao] = useState(null);
       const [anoEdicao, setAnoEdicao] = useState(new Date().getFullYear());
 
       const [formEvento, setFormEvento] = useState(EVENTO_INICIAL);
@@ -208,7 +208,7 @@
         };
       }, []);
 
-      // Gerador automático das reuniões fixas semanais
+      // Reuniões fixas semanais
       const reunioesFixasDoAno = useMemo(() => {
         const ano = currentDate.getFullYear();
         const escalaDoAno = rotacoes[String(ano)] || rotacoes["2026"] || CONFIG_RODIZIO_DEFAULT["2026"];
@@ -412,7 +412,7 @@
         setModalAberto(true);
       };
 
-      // Salvar (tanto Criação quanto Edição)
+      // Salvar
       const handleSalvarReserva = async (e) => {
         e.preventDefault();
         if (!window.db || !window.firestoreOps) {
@@ -501,24 +501,44 @@
             {/* BARRA DE FILTROS E MODO DE VISUALIZAÇÃO */}
             <div className="bg-slate-800 border-t border-slate-700 px-4 py-2.5">
               <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
-                {/* Congregações */}
-                <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
+                
+                {/* BOTÕES DAS CONGREGAÇÕES COM IDENTIFICAÇÃO DE CORES VINCULADA AOS AGENDAMENTOS */}
+                <div className="flex items-center gap-2 overflow-x-auto py-1">
                   <button
                     onClick={() => setCongAtiva('todas')}
-                    className={`px-3 py-1 text-xs rounded-full font-medium transition ${congAtiva === 'todas' ? 'bg-white text-slate-900 font-bold' : 'bg-slate-700 text-slate-300'}`}
+                    className={`px-3 py-1.5 text-xs rounded-full font-bold transition flex items-center gap-1.5 ${
+                      congAtiva === 'todas'
+                        ? 'bg-white text-slate-900 shadow-md ring-2 ring-white'
+                        : 'bg-slate-700/80 text-slate-300 hover:bg-slate-700'
+                    }`}
                   >
+                    <span className="w-2 h-2 rounded-full bg-slate-400"></span>
                     Todas
                   </button>
-                  {congregacoes.map(c => (
-                    <button
-                      key={c.id}
-                      onClick={() => setCongAtiva(c.id)}
-                      className={`px-3 py-1 text-xs rounded-full font-medium transition ${congAtiva === c.id ? 'text-white font-bold ring-2 ring-white shadow' : 'text-slate-300 bg-slate-700'}`}
-                      style={{ backgroundColor: congAtiva === c.id ? c.hex : undefined }}
-                    >
-                      {c.nome}
-                    </button>
-                  ))}
+
+                  {congregacoes.map(c => {
+                    const estaAtivo = congAtiva === c.id;
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => setCongAtiva(c.id)}
+                        style={{
+                          backgroundColor: estaAtivo ? c.hex : `${c.hex}22`,
+                          borderColor: c.hex,
+                          color: estaAtivo ? '#ffffff' : '#f8fafc'
+                        }}
+                        className={`px-3 py-1.5 text-xs rounded-full font-bold border transition flex items-center gap-1.5 shadow-sm ${
+                          estaAtivo ? 'ring-2 ring-white scale-105' : 'hover:brightness-125'
+                        }`}
+                      >
+                        <span
+                          className="w-2.5 h-2.5 rounded-full border border-white/60"
+                          style={{ backgroundColor: c.hex }}
+                        ></span>
+                        {c.nome}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* Filtro Espaço & SELETOR: MÊS / SEMANA / DIA */}
@@ -824,7 +844,7 @@
             )}
           </main>
 
-          {/* MODAL DETALHES COM BOTÃO DE EDITAR */}
+          {/* MODAL DETALHES */}
           {eventoSelecionado && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-xl">
@@ -1145,7 +1165,7 @@
                     })}
                   </div>
 
-                  {/* Restauração rápida se necessário */}
+                  {/* Restauração */}
                   <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800 flex justify-between items-center">
                     <div>
                       <p className="font-bold">Restaurar escala padrão</p>
